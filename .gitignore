@@ -1,0 +1,9 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs
+/ValheimRadar/bin
+/ValheimRadar/obj/Debug/net10.0
+/ValheimRadar/obj/Release
+/ValheimRadar/obj
