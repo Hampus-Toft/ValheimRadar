@@ -1,7 +1,11 @@
-﻿using System;
-using System.Collections.Generic;
-using BepInEx;
+﻿using BepInEx;
 using BepInEx.Configuration;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace ValheimRadar
@@ -23,7 +27,7 @@ namespace ValheimRadar
 
         public Vector3 GetCentroid()
         {
-            if (Items.Count == 0) return Vector3.zero;
+            if (Items == null || Items.Count == 0) return Vector3.zero;
             Vector3 sum = Vector3.zero;
             foreach (var item in Items) sum += item.Position;
             return sum / Items.Count;
@@ -34,14 +38,16 @@ namespace ValheimRadar
             return Items.Count > 1 ? $"{Items.Count}x {DisplayName}" : DisplayName;
         }
 
-        // Generates a unique tracking key based on the first item's ID in the cluster
         public string GetClusterKey()
         {
+            if (Items.Count == 0) return string.Empty;
             return $"{DisplayName}_{Items[0].Zdoid.UserID}_{Items[0].Zdoid.ID}";
         }
     }
 
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
+    [BepInDependency("KGvalheim.MoreMapPins", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency("Arielle.MoreMapPins", BepInDependency.DependencyFlags.SoftDependency)]
     public class RadarPlugin : BaseUnityPlugin
     {
         public const string PluginGUID = "com.yourname.valheimradar";
@@ -53,7 +59,7 @@ namespace ValheimRadar
         public static ConfigEntry<float> UpdateInterval;
         public static ConfigEntry<float> ClusterDistance;
 
-        // --- MASTER GROUP TOGGLES ---
+        // Group Toggles
         public static ConfigEntry<bool> Group_Creatures;
         public static ConfigEntry<bool> Group_Berries;
         public static ConfigEntry<bool> Group_Mushrooms;
@@ -62,22 +68,18 @@ namespace ValheimRadar
         public static ConfigEntry<bool> Group_Ores;
         public static ConfigEntry<bool> Group_Structures;
 
-        // --- SPECIFIC ITEM TOGGLES ---
-        // Creatures
+        // Specific Item Toggles
         public static ConfigEntry<bool> EnableMonsters;
         public static ConfigEntry<bool> EnableAnimals;
 
-        // Berries
         public static ConfigEntry<bool> TrackRaspberry;
         public static ConfigEntry<bool> TrackBlueberry;
         public static ConfigEntry<bool> TrackCloudberry;
 
-        // Mushrooms
         public static ConfigEntry<bool> TrackRedMushroom;
         public static ConfigEntry<bool> TrackYellowMushroom;
         public static ConfigEntry<bool> TrackBlueMushroom;
 
-        // Flowers & Crops (NEW)
         public static ConfigEntry<bool> TrackDandelion;
         public static ConfigEntry<bool> TrackThistle;
         public static ConfigEntry<bool> TrackCarrotSeed;
@@ -87,88 +89,106 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackFlax;
         public static ConfigEntry<bool> TrackMagecap;
 
-        // Rocks & Ground Items
         public static ConfigEntry<bool> TrackFlint;
         public static ConfigEntry<bool> TrackStone;
         public static ConfigEntry<bool> TrackWood;
 
-        // Ores
         public static ConfigEntry<bool> TrackCopper;
         public static ConfigEntry<bool> TrackTin;
         public static ConfigEntry<bool> TrackIron;
         public static ConfigEntry<bool> TrackSilver;
 
-        // Structures
         public static ConfigEntry<bool> TrackChests;
         public static ConfigEntry<bool> TrackDungeons;
         public static ConfigEntry<bool> TrackPortals;
         public static ConfigEntry<bool> TrackBeehives;
 
-        // Active cluster pins tracking dictionary
         private static readonly Dictionary<string, Minimap.PinData> activeClusterPins = new Dictionary<string, Minimap.PinData>();
+        private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "MoreMapPins");
         private float timer = 0f;
+        private static bool isMoreMapPinsLoaded = false;
 
+        // Custom Pin Type Cache (Fallback to standard PinTypes if MoreMapPins is missing)
+        private static Minimap.PinType CustomPin_Monster = Minimap.PinType.Icon3;
+        private static Minimap.PinType CustomPin_Animal = Minimap.PinType.Icon3;
+        private static Minimap.PinType CustomPin_Berry = Minimap.PinType.Icon3;
+        private static Minimap.PinType CustomPin_Mushroom = Minimap.PinType.Icon3;
+        private static Minimap.PinType CustomPin_Crop = Minimap.PinType.Icon3;
+        private static Minimap.PinType CustomPin_Ore = Minimap.PinType.Icon3;
+        private static Minimap.PinType CustomPin_Structure = Minimap.PinType.Icon3;
 
         private void Awake()
         {
-            // --- 1. GENERAL ---
-            ScanRadius = Config.Bind("General", "ScanRadius", 100f, "Scan radius around player.");
-            UpdateInterval = Config.Bind("General", "UpdateInterval", 1.0f, "Scan interval in seconds.");
-            ClusterDistance = Config.Bind("General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster."); // FIX: Added missing config binding
+            // --- GENERAL ---
+            ScanRadius = Config.Bind("1 - General", "ScanRadius", 100f, "Scan radius around player.");
+            UpdateInterval = Config.Bind("1 - General", "UpdateInterval", 1.0f, "Scan interval in seconds.");
+            ClusterDistance = Config.Bind("1 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.");
 
-            // --- 2. MASTER GROUP TOGGLES ---
-            Group_Creatures = Config.Bind("Group Toggles", "Enable Creatures Group", true, "Master toggle for all creatures (hostile & passive).");
-            Group_Berries = Config.Bind("Group Toggles", "Enable Berries Group", true, "Master toggle for all berry bushes.");
-            Group_Mushrooms = Config.Bind("Group Toggles", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
-            Group_FlowersAndCrops = Config.Bind("Group Toggles", "Enable Flowers and Crops Group", true, "Master toggle for plants, seeds, and crops.");
-            Group_RocksAndFlint = Config.Bind("Group Toggles", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
-            Group_Ores = Config.Bind("Group Toggles", "Enable Ores Group", true, "Master toggle for ore veins and deposits.");
-            Group_Structures = Config.Bind("Group Toggles", "Enable Structures Group", true, "Master toggle for chests, dungeons, portals, etc.");
+            // --- MASTER GROUPS ---
+            Group_Creatures = Config.Bind("2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures.");
+            Group_Berries = Config.Bind("2 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
+            Group_Mushrooms = Config.Bind("2 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
+            Group_FlowersAndCrops = Config.Bind("2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for plants, seeds, and crops.");
+            Group_RocksAndFlint = Config.Bind("2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
+            Group_Ores = Config.Bind("2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore veins and deposits.");
+            Group_Structures = Config.Bind("2 - Master Groups", "Enable Structures Group", true, "Master toggle for chests, dungeons, portals, etc.");
 
-            // --- 3. CREATURE TOGGLES ---
-            EnableMonsters = Config.Bind("Creatures", "Hostile Monsters", true, "Show aggressive creatures.");
-            EnableAnimals = Config.Bind("Creatures", "Passive Animals", true, "Show passive/tameable animals.");
+            // --- CREATURES ---
+            EnableMonsters = Config.Bind("3 - Creatures", "Hostile Monsters", true, "Show aggressive creatures.");
+            EnableAnimals = Config.Bind("3 - Creatures", "Passive Animals", true, "Show passive/tameable animals.");
 
-            // --- 4. BERRY TOGGLES ---
-            TrackRaspberry = Config.Bind("Resources - Berries", "Raspberries", true, "Show Raspberries.");
-            TrackBlueberry = Config.Bind("Resources - Berries", "Blueberries", true, "Show Blueberries.");
-            TrackCloudberry = Config.Bind("Resources - Berries", "Cloudberries", true, "Show Cloudberries.");
+            // --- BERRIES ---
+            TrackRaspberry = Config.Bind("4 - Resources (Berries)", "Raspberries", true, "Show Raspberries.");
+            TrackBlueberry = Config.Bind("4 - Resources (Berries)", "Blueberries", true, "Show Blueberries.");
+            TrackCloudberry = Config.Bind("4 - Resources (Berries)", "Cloudberries", true, "Show Cloudberries.");
 
-            // --- 5. MUSHROOM TOGGLES ---
-            TrackRedMushroom = Config.Bind("Resources - Mushrooms", "Red Mushrooms", true, "Show standard Red Mushrooms.");
-            TrackYellowMushroom = Config.Bind("Resources - Mushrooms", "Yellow Mushrooms", true, "Show Yellow Cave Mushrooms.");
-            TrackBlueMushroom = Config.Bind("Resources - Mushrooms", "Blue Mushrooms", true, "Show Blue Mushrooms.");
+            // --- MUSHROOMS ---
+            TrackRedMushroom = Config.Bind("5 - Resources (Mushrooms)", "Red Mushrooms", true, "Show standard Red Mushrooms.");
+            TrackYellowMushroom = Config.Bind("5 - Resources (Mushrooms)", "Yellow Mushrooms", true, "Show Yellow Cave Mushrooms.");
+            TrackBlueMushroom = Config.Bind("5 - Resources (Mushrooms)", "Blue Mushrooms", true, "Show Blue Mushrooms.");
 
-            // --- 6. FLOWERS & CROPS ---
-            TrackDandelion = Config.Bind("Resources - Plants & Crops", "Dandelion", true, "Show Dandelions.");
-            TrackThistle = Config.Bind("Resources - Plants & Crops", "Thistle", true, "Show Thistle.");
-            TrackCarrotSeed = Config.Bind("Resources - Plants & Crops", "Carrot Seeds", true, "Show wild Carrot seeds.");
-            TrackTurnipSeed = Config.Bind("Resources - Plants & Crops", "Turnip Seeds", true, "Show wild Turnip seeds.");
-            TrackOnionSeed = Config.Bind("Resources - Plants & Crops", "Onion Seeds", true, "Show wild Onion seeds.");
-            TrackBarley = Config.Bind("Resources - Plants & Crops", "Barley", true, "Show wild or grown Barley.");
-            TrackFlax = Config.Bind("Resources - Plants & Crops", "Flax", true, "Show wild or grown Flax.");
-            TrackMagecap = Config.Bind("Resources - Plants & Crops", "Magecap", true, "Show Magecap mushrooms/plants.");
+            // --- PLANTS & CROPS ---
+            TrackDandelion = Config.Bind("6 - Resources (Plants & Crops)", "Dandelion", true, "Show Dandelions.");
+            TrackThistle = Config.Bind("6 - Resources (Plants & Crops)", "Thistle", true, "Show Thistle.");
+            TrackCarrotSeed = Config.Bind("6 - Resources (Plants & Crops)", "Carrot Seeds", true, "Show wild Carrot seeds.");
+            TrackTurnipSeed = Config.Bind("6 - Resources (Plants & Crops)", "Turnip Seeds", true, "Show wild Turnip seeds.");
+            TrackOnionSeed = Config.Bind("6 - Resources (Plants & Crops)", "Onion Seeds", true, "Show wild Onion seeds.");
+            TrackBarley = Config.Bind("6 - Resources (Plants & Crops)", "Barley", true, "Show wild or grown Barley.");
+            TrackFlax = Config.Bind("6 - Resources (Plants & Crops)", "Flax", true, "Show wild or grown Flax.");
+            TrackMagecap = Config.Bind("6 - Resources (Plants & Crops)", "Magecap", true, "Show Magecap mushrooms/plants.");
 
-            // --- 7. GROUND PICKABLES ---
-            TrackFlint = Config.Bind("Resources - Ground", "Flint", true, "Show loose Flint.");
-            TrackStone = Config.Bind("Resources - Ground", "Stones", false, "Show loose Stones.");
-            TrackWood = Config.Bind("Resources - Ground", "Wood/Branches", false, "Show loose Wood.");
+            // --- GROUND PICKABLES ---
+            TrackFlint = Config.Bind("7 - Resources (Ground)", "Flint", true, "Show loose Flint.");
+            TrackStone = Config.Bind("7 - Resources (Ground)", "Stones", false, "Show loose Stones.");
+            TrackWood = Config.Bind("7 - Resources (Ground)", "Wood/Branches", false, "Show loose Wood.");
 
-            // --- 8. ORES ---
-            TrackCopper = Config.Bind("Resources - Ores", "Copper", true, "Show Copper deposits.");
-            TrackTin = Config.Bind("Resources - Ores", "Tin", true, "Show Tin deposits.");
-            TrackIron = Config.Bind("Resources - Ores", "Muddy Scrap / Iron", true, "Show Iron scrap deposits.");
-            TrackSilver = Config.Bind("Resources - Ores", "Silver", true, "Show Silver veins.");
+            // --- ORES ---
+            TrackCopper = Config.Bind("8 - Resources (Ores)", "Copper", true, "Show Copper deposits.");
+            TrackTin = Config.Bind("8 - Resources (Ores)", "Tin", true, "Show Tin deposits.");
+            TrackIron = Config.Bind("8 - Resources (Ores)", "Muddy Scrap / Iron", true, "Show Iron scrap deposits.");
+            TrackSilver = Config.Bind("8 - Resources (Ores)", "Silver", true, "Show Silver veins.");
 
-            // --- 9. STRUCTURES ---
-            TrackChests = Config.Bind("Structures", "Chests & Containers", true, "Show treasure chests and storage.");
-            TrackDungeons = Config.Bind("Structures", "Dungeons / Crypts / Caves", true, "Show Dungeon and Crypt entrances.");
-            TrackPortals = Config.Bind("Structures", "Portals", true, "Show player and ruined portals.");
-            TrackBeehives = Config.Bind("Structures", "Beehives", true, "Show wild and built Beehives.");
+            // --- STRUCTURES ---
+            TrackChests = Config.Bind("9 - Structures", "Chests & Containers", true, "Show treasure chests and storage.");
+            TrackDungeons = Config.Bind("9 - Structures", "Dungeons / Crypts / Caves", true, "Show Dungeon and Crypt entrances.");
+            TrackPortals = Config.Bind("9 - Structures", "Portals", true, "Show player and ruined portals.");
+            TrackBeehives = Config.Bind("9 - Structures", "Beehives", true, "Show wild and built Beehives.");
 
             //Config.SettingChanged += OnConfigurationChanged;
 
-            Logger.LogInfo($"{PluginName} fully loaded with granular group filtering!");
+            Logger.LogInfo($"{PluginName} initialized!");
+        }
+
+        private void UpdateCustomPinAssignments()
+        {
+            // Load directly from PNG files in BepInEx/config/MoreMapPins/
+            CustomPin_Monster = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "81.png"), Minimap.PinType.Icon3);
+            CustomPin_Animal = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "26.png"), Minimap.PinType.Icon3);
+            CustomPin_Berry = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "12.png"), Minimap.PinType.Icon3);
+            CustomPin_Mushroom = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "17.png"), Minimap.PinType.Icon3);
+            CustomPin_Crop = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "15.png"), Minimap.PinType.Icon3);
+            CustomPin_Ore = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "7.png"), Minimap.PinType.Icon3);
+            CustomPin_Structure = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "24.png"), Minimap.PinType.Icon3);
         }
 
         private void OnDestroy()
@@ -180,16 +200,14 @@ namespace ValheimRadar
         {
             ClearAllPins();
         }
+
         private static void ClearAllPins()
         {
             if (Minimap.instance == null) return;
 
             foreach (var kvp in activeClusterPins)
             {
-                if (kvp.Value != null)
-                {
-                    Minimap.instance.RemovePin(kvp.Value);
-                }
+                if (kvp.Value != null) Minimap.instance.RemovePin(kvp.Value);
             }
             activeClusterPins.Clear();
         }
@@ -207,6 +225,8 @@ namespace ValheimRadar
 
         private void ScanAndPinObjects(Minimap minimap)
         {
+            UpdateCustomPinAssignments();
+
             Vector3 playerPos = Player.m_localPlayer.transform.position;
             List<TrackedItem> detectedItems = new List<TrackedItem>();
             HashSet<ZDOID> processedZdoids = new HashSet<ZDOID>();
@@ -222,7 +242,7 @@ namespace ValheimRadar
                 if (netView == null || !netView.IsValid() || netView.GetZDO() == null) continue;
 
                 ZDOID zdoid = netView.GetZDO().m_uid;
-                if (processedZdoids.Contains(zdoid)) continue; // Skip redundant colliders on same object
+                if (processedZdoids.Contains(zdoid)) continue;
 
                 string rawName = netView.gameObject.name.Replace("(Clone)", "").Trim().ToLower();
 
@@ -269,13 +289,12 @@ namespace ValheimRadar
             foreach (var key in toRemove) activeClusterPins.Remove(key);
         }
 
-        // Placeholder for filter method matching your config toggles
         private bool ShouldPinGameObject(GameObject go, string nameLower, out string displayName, out Minimap.PinType pinType)
         {
             displayName = string.Empty;
             pinType = Minimap.PinType.Icon3;
 
-            // Extract display name via standard components
+            // Fetch hover or character name if present
             HoverText hover = go.GetComponent<HoverText>();
             if (hover != null && !string.IsNullOrEmpty(hover.m_text))
             {
@@ -287,10 +306,14 @@ namespace ValheimRadar
                 if (character != null) displayName = character.GetHoverName();
             }
 
+            // Fallback to GameObject name if no hover text exists
             if (string.IsNullOrEmpty(displayName))
             {
-                displayName = go.name.Replace("(Clone)", "").Trim();
+                displayName = go.name;
             }
+
+            // Sanitize the raw string into clean human-friendly text
+            displayName = FormatHumanFriendlyName(displayName);
 
             // 1. CREATURES
             if (Group_Creatures.Value)
@@ -301,12 +324,12 @@ namespace ValheimRadar
                     bool isMonster = character.IsMonsterFaction(Time.time);
                     if (EnableMonsters.Value && isMonster)
                     {
-                        pinType = Minimap.PinType.Death; // Hostile icon
+                        pinType = CustomPin_Monster;
                         return true;
                     }
                     if (EnableAnimals.Value && !isMonster)
                     {
-                        pinType = Minimap.PinType.Icon3; // Neutral icon
+                        pinType = CustomPin_Animal;
                         return true;
                     }
                 }
@@ -315,71 +338,78 @@ namespace ValheimRadar
             // 2. BERRIES
             if (Group_Berries.Value)
             {
-                if (TrackRaspberry.Value && nameLower.Contains("raspberry")) return true;
-                if (TrackBlueberry.Value && nameLower.Contains("blueberry")) return true;
-                if (TrackCloudberry.Value && nameLower.Contains("cloudberry")) return true;
+                if ((TrackRaspberry.Value && nameLower.Contains("raspberry")) ||
+                    (TrackBlueberry.Value && nameLower.Contains("blueberry")) ||
+                    (TrackCloudberry.Value && nameLower.Contains("cloudberry")))
+                {
+                    pinType = CustomPin_Berry;
+                    return true;
+                }
             }
 
             // 3. MUSHROOMS
             if (Group_Mushrooms.Value)
             {
-                if (TrackRedMushroom.Value && nameLower.Equals("pickable_mushroom")) return true;
-                if (TrackYellowMushroom.Value && nameLower.Contains("yellow")) return true;
-                if (TrackBlueMushroom.Value && nameLower.Contains("blue")) return true;
+                if ((TrackRedMushroom.Value && nameLower.Equals("pickable_mushroom")) ||
+                    (TrackYellowMushroom.Value && nameLower.Contains("yellow")) ||
+                    (TrackBlueMushroom.Value && nameLower.Contains("blue")))
+                {
+                    pinType = CustomPin_Mushroom;
+                    return true;
+                }
             }
 
             // 4. FLOWERS & CROPS
             if (Group_FlowersAndCrops.Value)
             {
-                if (TrackDandelion.Value && nameLower.Contains("dandelion")) return true;
-                if (TrackThistle.Value && nameLower.Contains("thistle")) return true;
-                if (TrackCarrotSeed.Value && nameLower.Contains("carrot")) return true;
-                if (TrackTurnipSeed.Value && nameLower.Contains("turnip")) return true;
-                if (TrackOnionSeed.Value && nameLower.Contains("onion")) return true;
-                if (TrackBarley.Value && nameLower.Contains("barley")) return true;
-                if (TrackFlax.Value && nameLower.Contains("flax")) return true;
-                if (TrackMagecap.Value && nameLower.Contains("magecap")) return true;
+                if ((TrackDandelion.Value && nameLower.Contains("dandelion")) ||
+                    (TrackThistle.Value && nameLower.Contains("thistle")) ||
+                    (TrackCarrotSeed.Value && nameLower.Contains("carrot")) ||
+                    (TrackTurnipSeed.Value && nameLower.Contains("turnip")) ||
+                    (TrackOnionSeed.Value && nameLower.Contains("onion")) ||
+                    (TrackBarley.Value && nameLower.Contains("barley")) ||
+                    (TrackFlax.Value && nameLower.Contains("flax")) ||
+                    (TrackMagecap.Value && nameLower.Contains("magecap")))
+                {
+                    pinType = CustomPin_Crop;
+                    return true;
+                }
             }
 
             // 5. GROUND PICKABLES
             if (Group_RocksAndFlint.Value)
             {
-                if (TrackFlint.Value && nameLower.Contains("flint")) return true;
-                if (TrackStone.Value && nameLower.Contains("stone") && go.GetComponent<Pickable>() != null) return true;
-                if (TrackWood.Value && (nameLower.Contains("wood") || nameLower.Contains("branch")) && go.GetComponent<Pickable>() != null) return true;
+                if ((TrackFlint.Value && nameLower.Contains("flint")) ||
+                    (TrackStone.Value && nameLower.Contains("stone") && go.GetComponent<Pickable>() != null) ||
+                    (TrackWood.Value && (nameLower.Contains("wood") || nameLower.Contains("branch")) && go.GetComponent<Pickable>() != null))
+                {
+                    pinType = CustomPin_Crop;
+                    return true;
+                }
             }
 
             // 6. ORES
             if (Group_Ores.Value)
             {
-                pinType = Minimap.PinType.Icon1;
-                if (TrackCopper.Value && nameLower.Contains("copper")) return true;
-                if (TrackTin.Value && nameLower.Contains("tin")) return true;
-                if (TrackIron.Value && (nameLower.Contains("muddy") || nameLower.Contains("iron"))) return true;
-                if (TrackSilver.Value && nameLower.Contains("silver")) return true;
+                if ((TrackCopper.Value && nameLower.Contains("copper")) ||
+                    (TrackTin.Value && nameLower.Contains("tin")) ||
+                    (TrackIron.Value && (nameLower.Contains("muddy") || nameLower.Contains("iron"))) ||
+                    (TrackSilver.Value && nameLower.Contains("silver")))
+                {
+                    pinType = CustomPin_Ore;
+                    return true;
+                }
             }
 
             // 7. STRUCTURES
             if (Group_Structures.Value)
             {
-                if (TrackChests.Value && go.GetComponent<Container>() != null)
+                if ((TrackChests.Value && go.GetComponent<Container>() != null) ||
+                    (TrackPortals.Value && (go.GetComponent<TeleportWorld>() != null || nameLower.Contains("portal"))) ||
+                    (TrackDungeons.Value && (nameLower.Contains("dungeon") || nameLower.Contains("crypt") || nameLower.Contains("cave"))) ||
+                    (TrackBeehives.Value && nameLower.Contains("beehive")))
                 {
-                    pinType = Minimap.PinType.Icon3;
-                    return true;
-                }
-                if (TrackPortals.Value && (go.GetComponent<TeleportWorld>() != null || nameLower.Contains("portal")))
-                {
-                    pinType = Minimap.PinType.Icon4;
-                    return true;
-                }
-                if (TrackDungeons.Value && (nameLower.Contains("dungeon") || nameLower.Contains("crypt") || nameLower.Contains("cave")))
-                {
-                    pinType = Minimap.PinType.Icon2;
-                    return true;
-                }
-                if (TrackBeehives.Value && nameLower.Contains("beehive"))
-                {
-                    pinType = Minimap.PinType.Icon3;
+                    pinType = CustomPin_Structure;
                     return true;
                 }
             }
@@ -438,6 +468,27 @@ namespace ValheimRadar
                 Minimap.PinData newPin = minimap.AddPin(pos, pinType, name, save: false, isChecked: false);
                 activeClusterPins.Add(clusterKey, newPin);
             }
+        }
+        private static string FormatHumanFriendlyName(string rawName)
+        {
+            if (string.IsNullOrEmpty(rawName)) return string.Empty;
+
+            // 1. Remove common internal prefixes (case-insensitive)
+            string clean = Regex.Replace(rawName, @"(?i)^(pickable_|item_|piece_|vfx_|sfx_)", "");
+
+            // 2. Remove (Clone) suffix or extra whitespace
+            clean = clean.Replace("(Clone)", "").Trim();
+
+            // 3. Replace underscores with spaces
+            clean = clean.Replace('_', ' ');
+
+            // 4. Insert spaces before capital letters in camelCase/PascalCase (e.g., "CarrotSeed" -> "Carrot Seed")
+            clean = Regex.Replace(clean, @"(?<=[a-z])(?=[A-Z])", " ");
+
+            // 5. Convert to Title Case (e.g., "dandelion" -> "Dandelion")
+            clean = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(clean.ToLower());
+
+            return clean;
         }
     }
 }
