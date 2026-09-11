@@ -1,4 +1,6 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using UnityEngine;
 
 namespace ValheimRadar
@@ -25,7 +27,16 @@ namespace ValheimRadar
         public string GetClusterKey()
         {
             if (Items.Count == 0) return string.Empty;
-            return $"{DisplayName}_{Items[0].Zdoid.UserID}_{Items[0].Zdoid.ID}";
+
+            var sortedIds = Items
+                .Select(item => $"{item.Zdoid.UserID}:{item.Zdoid.ID}")
+                .OrderBy(id => id, System.StringComparer.Ordinal);
+
+            var sb = new StringBuilder();
+            sb.Append(DisplayName).Append('_');
+            foreach (var id in sortedIds) sb.Append(id).Append('|');
+
+            return sb.ToString();
         }
     }
 }

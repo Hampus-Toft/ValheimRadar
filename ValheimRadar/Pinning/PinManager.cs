@@ -1,7 +1,6 @@
-﻿using BepInEx;
+using BepInEx;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
 using UnityEngine;
 
 namespace ValheimRadar
@@ -53,10 +52,7 @@ namespace ValheimRadar
 
         public static Minimap.PinType ResolvePerObjectPin(string rawName, string categoryDefaultPng)
         {
-            string cleanKey = Regex.Replace(rawName, @"(?i)^(pickable_|item_|piece_|vfx_|sfx_)", "")
-                                   .Replace("(Clone)", "")
-                                   .Trim()
-                                   .ToLower();
+            string cleanKey = ObjectEvaluator.StripKnownPrefixes(rawName);
 
             string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
             if (File.Exists(specificPath))

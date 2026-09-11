@@ -15,6 +15,7 @@ namespace ValheimRadar
         public const string PluginVersion = "1.3.0";
 
         private float timer = 0f;
+        private bool wasActive = false;
 
         private void Awake()
         {
@@ -26,6 +27,7 @@ namespace ValheimRadar
         private void OnDestroy()
         {
             Config.SettingChanged -= OnConfigurationChanged;
+            PinManager.ClearAllPins();
         }
 
         private void OnConfigurationChanged(object sender, EventArgs e)
@@ -35,7 +37,19 @@ namespace ValheimRadar
 
         private void Update()
         {
-            if (Player.m_localPlayer == null || Minimap.instance == null) return;
+            if (Player.m_localPlayer == null || Minimap.instance == null)
+            {
+                // Player disconnected or the world unloaded - drop stale pin state now
+                // rather than letting activeClusterPins hold onto pins from the old session.
+                if (wasActive)
+                {
+                    PinManager.ClearAllPins();
+                    wasActive = false;
+                }
+                return;
+            }
+
+            wasActive = true;
 
             timer += Time.deltaTime;
             if (timer < RadarConfig.UpdateInterval.Value) return;
