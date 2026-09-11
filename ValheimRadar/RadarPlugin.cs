@@ -12,7 +12,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.3.0";
+        public const string PluginVersion = "1.4.0";
 
         private float timer = 0f;
 
