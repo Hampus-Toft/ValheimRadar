@@ -56,7 +56,7 @@
           ContinueOnError="true"
           IgnoreExitCode="true" />
 
-    <Exec Command="start steam://rungameid/892970//-devcommands"
+    <Exec Command="start &quot;&quot; &quot;steam://rungameid/892970//-devcommands -console&quot;"
           Condition="'$(AutoLaunchValheim)' == 'true'"
           ContinueOnError="true" />
   </Target>
