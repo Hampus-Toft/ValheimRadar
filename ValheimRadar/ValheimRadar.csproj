@@ -47,7 +47,7 @@
   </ItemGroup>
 
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
-    <Exec Command=":: Copy DLL to plugins directory&#xD;&#xA;xcopy /Y &quot;$(TargetPath)&quot; &quot;$(ValheimInstallDir)\BepInEx\plugins\&quot;&#xD;&#xA;&#xD;&#xA;:: Kill running Valheim process (suppresses error if not running)&#xD;&#xA;taskkill /F /IM valheim.exe 2&gt;NUL&#xD;&#xA;&#xD;&#xA;:: Launch Valheim via Steam with devcommands enabled&#xD;&#xA;start steam://rungameid/892970//" />
+    <Exec Command=":: Copy DLL to plugins directory&#xD;&#xA;xcopy /Y &quot;$(TargetPath)&quot; &quot;$(ValheimInstallDir)\BepInEx\plugins\&quot;&#xD;&#xA;&#xD;&#xA;:: Kill running Valheim process (suppresses error if not running)&#xD;&#xA;taskkill /F /IM valheim.exe 2&gt;NUL&#xD;&#xA;&#xD;&#xA;:: Launch Valheim via Steam with devcommands enabled&#xD;&#xA;start steam://rungameid/892970//-devcommands" />
   </Target>
 
 </Project>
