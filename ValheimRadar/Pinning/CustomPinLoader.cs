@@ -8,12 +8,27 @@ namespace ValheimRadar
     public static class CustomPinLoader
     {
         private static readonly Dictionary<string, Minimap.PinType> RegisteredCustomPins = new Dictionary<string, Minimap.PinType>();
+        private static Minimap m_registeredAgainst;
+
+        public static void Clear()
+        {
+            RegisteredCustomPins.Clear();
+            m_registeredAgainst = null;
+        }
 
         public static Minimap.PinType RegisterPngAsPin(string filePath, Minimap.PinType fallback)
         {
             if (!File.Exists(filePath))
             {
                 return fallback;
+            }
+
+            if (Minimap.instance != m_registeredAgainst)
+            {
+                // Cached PinType values are indices into the previous Minimap.instance.m_icons list.
+                // A new instance (world reload/reconnect) invalidates them, so drop the stale cache.
+                Clear();
+                m_registeredAgainst = Minimap.instance;
             }
 
             if (RegisteredCustomPins.TryGetValue(filePath, out Minimap.PinType cachedType))
