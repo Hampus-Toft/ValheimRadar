@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using UnityEngine;
 
@@ -52,7 +51,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.2.0";
 
         // General
         public static ConfigEntry<float> ScanRadius;
@@ -66,7 +65,8 @@ namespace ValheimRadar
         public static ConfigEntry<bool> Group_FlowersAndCrops;
         public static ConfigEntry<bool> Group_RocksAndFlint;
         public static ConfigEntry<bool> Group_Ores;
-        public static ConfigEntry<bool> Group_Structures;
+        public static ConfigEntry<bool> Group_FunctionalStructures;
+        public static ConfigEntry<bool> Group_RuinsAndLocations;
 
         // Creature Toggles & Star Filters
         public static ConfigEntry<bool> EnableMonsters;
@@ -74,15 +74,17 @@ namespace ValheimRadar
         public static ConfigEntry<int> MinMonsterStars;
         public static ConfigEntry<int> MinAnimalStars;
 
-        // Specific Item Toggles
+        // Berries
         public static ConfigEntry<bool> TrackRaspberry;
         public static ConfigEntry<bool> TrackBlueberry;
         public static ConfigEntry<bool> TrackCloudberry;
 
+        // Mushrooms
         public static ConfigEntry<bool> TrackRedMushroom;
         public static ConfigEntry<bool> TrackYellowMushroom;
         public static ConfigEntry<bool> TrackBlueMushroom;
 
+        // Plants & Crops
         public static ConfigEntry<bool> TrackDandelion;
         public static ConfigEntry<bool> TrackThistle;
         public static ConfigEntry<bool> TrackCarrotSeed;
@@ -92,32 +94,32 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackFlax;
         public static ConfigEntry<bool> TrackMagecap;
 
+        // Ground Pickables
         public static ConfigEntry<bool> TrackFlint;
         public static ConfigEntry<bool> TrackStone;
         public static ConfigEntry<bool> TrackWood;
 
+        // Ores
         public static ConfigEntry<bool> TrackCopper;
         public static ConfigEntry<bool> TrackTin;
         public static ConfigEntry<bool> TrackIron;
         public static ConfigEntry<bool> TrackSilver;
 
+        // Functional Structures
         public static ConfigEntry<bool> TrackChests;
         public static ConfigEntry<bool> TrackDungeons;
         public static ConfigEntry<bool> TrackPortals;
         public static ConfigEntry<bool> TrackBeehives;
 
+        // Decorative Ruins & World Locations
+        public static ConfigEntry<bool> TrackAbandonedRuins;
+        public static ConfigEntry<bool> TrackStoneRings;
+        public static ConfigEntry<bool> TrackRunestones;
+        public static ConfigEntry<bool> TrackTarPits;
+
         private static readonly Dictionary<string, Minimap.PinData> activeClusterPins = new Dictionary<string, Minimap.PinData>();
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "MoreMapPins");
         private float timer = 0f;
-
-        // Default Category Fallbacks
-        private static Minimap.PinType CustomPin_Monster = Minimap.PinType.Icon3;
-        private static Minimap.PinType CustomPin_Animal = Minimap.PinType.Icon3;
-        private static Minimap.PinType CustomPin_Berry = Minimap.PinType.Icon3;
-        private static Minimap.PinType CustomPin_Mushroom = Minimap.PinType.Icon3;
-        private static Minimap.PinType CustomPin_Crop = Minimap.PinType.Icon3;
-        private static Minimap.PinType CustomPin_Ore = Minimap.PinType.Icon3;
-        private static Minimap.PinType CustomPin_Structure = Minimap.PinType.Icon3;
 
         private void Awake()
         {
@@ -133,9 +135,10 @@ namespace ValheimRadar
             Group_FlowersAndCrops = Config.Bind("2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for plants, seeds, and crops.");
             Group_RocksAndFlint = Config.Bind("2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
             Group_Ores = Config.Bind("2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore veins and deposits.");
-            Group_Structures = Config.Bind("2 - Master Groups", "Enable Structures Group", true, "Master toggle for chests, dungeons, portals, etc.");
+            Group_FunctionalStructures = Config.Bind("2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests, dungeons, portals, beehives.");
+            Group_RuinsAndLocations = Config.Bind("2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for stone rings, abandoned farms, ruins, runestones.");
 
-            // --- CREATURES & STAR FILTERS ---
+            // --- CREATURES ---
             EnableMonsters = Config.Bind("3 - Creatures", "Hostile Monsters", true, "Show aggressive creatures.");
             EnableAnimals = Config.Bind("3 - Creatures", "Passive Animals", true, "Show passive/tameable animals.");
             MinMonsterStars = Config.Bind("3 - Creatures", "Min Monster Stars", 0, "Minimum star level for monsters (0 = All, 1 = 1 Star+, 2 = 2 Stars only).");
@@ -172,55 +175,19 @@ namespace ValheimRadar
             TrackIron = Config.Bind("8 - Resources (Ores)", "Muddy Scrap / Iron", true, "Show Iron scrap deposits.");
             TrackSilver = Config.Bind("8 - Resources (Ores)", "Silver", true, "Show Silver veins.");
 
-            // --- STRUCTURES ---
-            TrackChests = Config.Bind("9 - Structures", "Chests & Containers", true, "Show treasure chests and storage.");
-            TrackDungeons = Config.Bind("9 - Structures", "Dungeons / Crypts / Caves", true, "Show Dungeon and Crypt entrances.");
-            TrackPortals = Config.Bind("9 - Structures", "Portals", true, "Show player and ruined portals.");
-            TrackBeehives = Config.Bind("9 - Structures", "Beehives", true, "Show wild and built Beehives.");
+            // --- FUNCTIONAL STRUCTURES ---
+            TrackChests = Config.Bind("9 - Structures (Functional)", "Chests & Containers", true, "Show treasure chests and storage.");
+            TrackDungeons = Config.Bind("9 - Structures (Functional)", "Dungeons / Crypts / Caves", true, "Show Dungeon and Crypt entrances.");
+            TrackPortals = Config.Bind("9 - Structures (Functional)", "Portals", true, "Show player and ruined portals.");
+            TrackBeehives = Config.Bind("9 - Structures (Functional)", "Beehives", true, "Show wild and built Beehives.");
+
+            // --- DECORATIVE RUINS & LOCATIONS ---
+            TrackAbandonedRuins = Config.Bind("10 - Structures (Ruins & World)", "Abandoned Farms & Ruins", true, "Show ruined houses, farmsteads, and towers.");
+            TrackStoneRings = Config.Bind("10 - Structures (Ruins & World)", "Stone Rings", true, "Show burial stone circles and rock formations.");
+            TrackRunestones = Config.Bind("10 - Structures (Ruins & World)", "Runestones", true, "Show lore and vegvisir runestones.");
+            TrackTarPits = Config.Bind("10 - Structures (Ruins & World)", "Tar Pits", true, "Show Plains tar pits.");
 
             Logger.LogInfo($"{PluginName} initialized!");
-        }
-
-        private void UpdateCategoryPinDefaults()
-        {
-            CustomPin_Monster = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "monster.png"),
-                                CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "81.png"), Minimap.PinType.Icon3));
-
-            CustomPin_Animal = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "animal.png"),
-                               CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "26.png"), Minimap.PinType.Icon3));
-
-            CustomPin_Berry = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "berry.png"),
-                              CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "12.png"), Minimap.PinType.Icon3));
-
-            CustomPin_Mushroom = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "mushroom.png"),
-                                 CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "17.png"), Minimap.PinType.Icon3));
-
-            CustomPin_Crop = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "crop.png"),
-                             CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "15.png"), Minimap.PinType.Icon3));
-
-            CustomPin_Ore = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "ore.png"),
-                            CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "7.png"), Minimap.PinType.Icon3));
-
-            CustomPin_Structure = CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "structure.png"),
-                                 CustomPinLoader.RegisterPngAsPin(Path.Combine(ConfigIconFolder, "24.png"), Minimap.PinType.Icon3));
-        }
-
-        private Minimap.PinType GetPinForObject(string rawName, Minimap.PinType categoryFallback)
-        {
-            if (string.IsNullOrEmpty(rawName)) return categoryFallback;
-
-            string cleanKey = Regex.Replace(rawName, @"(?i)^(pickable_|item_|piece_|vfx_|sfx_)", "")
-                                   .Replace("(Clone)", "")
-                                   .Trim()
-                                   .ToLower();
-
-            string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
-            if (File.Exists(specificPath))
-            {
-                return CustomPinLoader.RegisterPngAsPin(specificPath, categoryFallback);
-            }
-
-            return categoryFallback;
         }
 
         private void OnDestroy()
@@ -257,8 +224,6 @@ namespace ValheimRadar
 
         private void ScanAndPinObjects(Minimap minimap)
         {
-            UpdateCategoryPinDefaults();
-
             Vector3 playerPos = Player.m_localPlayer.transform.position;
             List<TrackedItem> detectedItems = new List<TrackedItem>();
             HashSet<ZDOID> processedZdoids = new HashSet<ZDOID>();
@@ -319,6 +284,35 @@ namespace ValheimRadar
             }
 
             foreach (var key in toRemove) activeClusterPins.Remove(key);
+        }
+
+        /// <summary>
+        /// Dedicated Extensible Per-Object Icon Resolver.
+        /// Searches for specific icon PNG files in BepInEx/config/MoreMapPins/
+        /// </summary>
+        private Minimap.PinType ResolvePerObjectPin(string rawName, string categoryDefaultPng)
+        {
+            string cleanKey = Regex.Replace(rawName, @"(?i)^(pickable_|item_|piece_|vfx_|sfx_)", "")
+                                   .Replace("(Clone)", "")
+                                   .Trim()
+                                   .ToLower();
+
+            // 1. Try Specific Item PNG (e.g., "boar.png", "wolf.png", "raspberry.png", "stone_ring.png")
+            string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
+            if (File.Exists(specificPath))
+            {
+                return CustomPinLoader.RegisterPngAsPin(specificPath, Minimap.PinType.Icon3);
+            }
+
+            // 2. Try Category Fallback PNG (e.g., "animal.png", "berry.png", "dungeon.png")
+            string categoryPath = Path.Combine(ConfigIconFolder, categoryDefaultPng);
+            if (File.Exists(categoryPath))
+            {
+                return CustomPinLoader.RegisterPngAsPin(categoryPath, Minimap.PinType.Icon3);
+            }
+
+            // 3. Fallback to default in-game pin
+            return Minimap.PinType.Icon3;
         }
 
         private bool IsPassiveAnimal(Character character)
@@ -384,18 +378,18 @@ namespace ValheimRadar
                     if (isMonster && EnableMonsters.Value)
                     {
                         if (starLevel < MinMonsterStars.Value) return false;
-
                         if (starLevel > 0) displayName += $" ({new string('★', starLevel)})";
-                        pinType = GetPinForObject(nameLower, CustomPin_Monster);
+
+                        pinType = ResolvePerObjectPin(nameLower, "monster.png");
                         return true;
                     }
 
                     if (isAnimal && EnableAnimals.Value)
                     {
                         if (starLevel < MinAnimalStars.Value) return false;
-
                         if (starLevel > 0) displayName += $" ({new string('★', starLevel)})";
-                        pinType = GetPinForObject(nameLower, CustomPin_Animal);
+
+                        pinType = ResolvePerObjectPin(nameLower, "animal.png");
                         return true;
                     }
                 }
@@ -408,7 +402,7 @@ namespace ValheimRadar
                     (TrackBlueberry.Value && nameLower.Contains("blueberry")) ||
                     (TrackCloudberry.Value && nameLower.Contains("cloudberry")))
                 {
-                    pinType = GetPinForObject(nameLower, CustomPin_Berry);
+                    pinType = ResolvePerObjectPin(nameLower, "berry.png");
                     return true;
                 }
             }
@@ -420,7 +414,7 @@ namespace ValheimRadar
                     (TrackYellowMushroom.Value && nameLower.Contains("yellow")) ||
                     (TrackBlueMushroom.Value && nameLower.Contains("blue")))
                 {
-                    pinType = GetPinForObject(nameLower, CustomPin_Mushroom);
+                    pinType = ResolvePerObjectPin(nameLower, "mushroom.png");
                     return true;
                 }
             }
@@ -437,7 +431,7 @@ namespace ValheimRadar
                     (TrackFlax.Value && nameLower.Contains("flax")) ||
                     (TrackMagecap.Value && nameLower.Contains("magecap")))
                 {
-                    pinType = GetPinForObject(nameLower, CustomPin_Crop);
+                    pinType = ResolvePerObjectPin(nameLower, "crop.png");
                     return true;
                 }
             }
@@ -449,7 +443,7 @@ namespace ValheimRadar
                     (TrackStone.Value && nameLower.Contains("stone") && go.GetComponent<Pickable>() != null) ||
                     (TrackWood.Value && (nameLower.Contains("wood") || nameLower.Contains("branch")) && go.GetComponent<Pickable>() != null))
                 {
-                    pinType = GetPinForObject(nameLower, CustomPin_Crop);
+                    pinType = ResolvePerObjectPin(nameLower, "ground.png");
                     return true;
                 }
             }
@@ -462,20 +456,63 @@ namespace ValheimRadar
                     (TrackIron.Value && (nameLower.Contains("muddy") || nameLower.Contains("iron"))) ||
                     (TrackSilver.Value && nameLower.Contains("silver")))
                 {
-                    pinType = GetPinForObject(nameLower, CustomPin_Ore);
+                    pinType = ResolvePerObjectPin(nameLower, "ore.png");
                     return true;
                 }
             }
 
-            // 7. STRUCTURES
-            if (Group_Structures.Value)
+            // 7. FUNCTIONAL STRUCTURES
+            if (Group_FunctionalStructures.Value)
             {
-                if ((TrackChests.Value && go.GetComponent<Container>() != null) ||
-                    (TrackPortals.Value && (go.GetComponent<TeleportWorld>() != null || nameLower.Contains("portal"))) ||
-                    (TrackDungeons.Value && (nameLower.Contains("dungeon") || nameLower.Contains("crypt") || nameLower.Contains("cave"))) ||
-                    (TrackBeehives.Value && nameLower.Contains("beehive")))
+                if (TrackChests.Value && go.GetComponent<Container>() != null)
                 {
-                    pinType = GetPinForObject(nameLower, CustomPin_Structure);
+                    pinType = ResolvePerObjectPin(nameLower, "chest.png");
+                    return true;
+                }
+
+                if (TrackPortals.Value && (go.GetComponent<TeleportWorld>() != null || nameLower.Contains("portal")))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "portal.png");
+                    return true;
+                }
+
+                if (TrackDungeons.Value && (nameLower.Contains("dungeon") || nameLower.Contains("crypt") || nameLower.Contains("cave") || nameLower.Contains("burial")))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "dungeon.png");
+                    return true;
+                }
+
+                if (TrackBeehives.Value && nameLower.Contains("beehive"))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "beehive.png");
+                    return true;
+                }
+            }
+
+            // 8. DECORATIVE RUINS & WORLD LOCATIONS
+            if (Group_RuinsAndLocations.Value)
+            {
+                if (TrackStoneRings.Value && (nameLower.Contains("stonering") || nameLower.Contains("rockformation") || nameLower.Contains("stone_ring")))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "stone_ring.png");
+                    return true;
+                }
+
+                if (TrackAbandonedRuins.Value && (nameLower.Contains("ruin") || nameLower.Contains("abandoned") || nameLower.Contains("woodhouse") || nameLower.Contains("village")))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "ruin.png");
+                    return true;
+                }
+
+                if (TrackRunestones.Value && nameLower.Contains("runestone"))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "runestone.png");
+                    return true;
+                }
+
+                if (TrackTarPits.Value && (nameLower.Contains("tarpit") || nameLower.Contains("tar_pit")))
+                {
+                    pinType = ResolvePerObjectPin(nameLower, "tarpit.png");
                     return true;
                 }
             }
@@ -543,7 +580,7 @@ namespace ValheimRadar
             string clean = Regex.Replace(rawName, @"(?i)^(pickable_|item_|piece_|vfx_|sfx_)", "");
             clean = clean.Replace("(Clone)", "").Trim();
             clean = clean.Replace('_', ' ');
-            clean = Regex.Replace(clean, @"(?<=[a-z])(?=[A-Z])", " ");
+            clean = Regex.Replace(clean, @"(?{1}[a-z])(?=[A-Z])", " ");
             clean = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(clean.ToLower());
 
             return clean;
