@@ -52,7 +52,7 @@ namespace ValheimRadar
 
         public static Minimap.PinType ResolvePerObjectPin(string rawName, string categoryDefaultPng)
         {
-            string cleanKey = ObjectEvaluator.StripKnownPrefixes(rawName);
+            string cleanKey = ObjectEvaluator.StripKnownPrefixes(rawName).ToLower();
 
             string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
             if (File.Exists(specificPath))
