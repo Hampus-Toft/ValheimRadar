@@ -5,6 +5,14 @@
 	<LangVersion>latest</LangVersion>
 	<Nullable>disable</Nullable>
 	<AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!--
+      MSB3277: Valheim's game assemblies (assembly_valheim.dll, assembly_guiutils.dll) were built
+      against older Mono-era facade versions of System.Net.Http/System.IO.Compression than the
+      netstandard2.1 SDK's own reference assemblies. Both are compile-time-only facades (never
+      copied to the plugin's output), so the conflict is cosmetic - suppress it rather than chase
+      an unfixable version mismatch in a third-party game binary.
+    -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
   </PropertyGroup>
 
   <!--
