@@ -68,10 +68,14 @@ namespace ValheimRadar
             new ResourceRule("Silver", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => n.Contains("silver"), "ore.png", "silverore"),
 
             // FUNCTIONAL STRUCTURES
+            // Beehives must be checked before Chests - a wild Beehive has its own Container
+            // component (for the honey), so the generic "any Container" Chests rule below would
+            // otherwise swallow it first, giving it the wrong icon and putting it under the wrong
+            // enable/disable toggle.
+            new ResourceRule("Beehives", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBeehives.Value, (go, n) => n.Contains("beehive"), "beehive.png", "beehive"),
             new ResourceRule("Chests", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackChests.Value, (go, n) => go.GetComponent<Container>() != null, "chest.png", "chest_wood"),
             new ResourceRule("Portals", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackPortals.Value, (go, n) => go.GetComponent<TeleportWorld>() != null || n.Contains("portal"), "portal.png", "portal_wood"),
             new ResourceRule("Dungeons", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackDungeons.Value, (go, n) => n.Contains("dungeon") || n.Contains("crypt") || n.Contains("cave") || n.Contains("burial"), "dungeon.png"),
-            new ResourceRule("Beehives", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBeehives.Value, (go, n) => n.Contains("beehive"), "beehive.png", "beehive"),
 
             // DECORATIVE RUINS & LOCATIONS (no vanilla icon to borrow - rely on category PNG/fallback)
             new ResourceRule("StoneRings", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackStoneRings.Value, (go, n) => n.Contains("stonering") || n.Contains("rockformation") || n.Contains("stone_ring"), "stone_ring.png"),

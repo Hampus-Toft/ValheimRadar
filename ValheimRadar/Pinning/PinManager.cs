@@ -35,6 +35,17 @@ namespace ValheimRadar
         private static readonly Dictionary<string, TrackedItem> rawPersistentPoints = new Dictionary<string, TrackedItem>();
         private static bool rawPointsDirty;
 
+        // A newly-recorded point is treated as "already known" if it lands within this radius of an
+        // existing point of the same DisplayName, even when its ZDOID doesn't match any recorded key.
+        // This is deliberately much smaller than ClusterDistance (which groups genuinely distinct
+        // nearby objects into one pin) - it exists only to catch the same physical object being
+        // rediscovered. Some world-generated objects (observed with wild Beehives) aren't given a
+        // ZDOID that's stable across game sessions, so a ZDOID-only dedup lets the same spot get
+        // recorded as a brand new point on every relog, permanently inflating that cluster's count by
+        // one each time. Deterministically-placed objects reappear at the exact same position, so a
+        // tight proximity check catches this without risking merging two real, distinct objects.
+        private const float DuplicatePointRadius = 0.25f;
+
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar");
         private static string PinDataFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar", "PinData");
 
@@ -66,6 +77,7 @@ namespace ValheimRadar
 
                 string key = RawPointKey(item.Zdoid);
                 if (rawPersistentPoints.ContainsKey(key)) continue;
+                if (IsDuplicatePosition(item)) continue;
 
                 rawPersistentPoints[key] = item;
                 rawPointsDirty = true;
@@ -80,6 +92,19 @@ namespace ValheimRadar
         }
 
         private static string RawPointKey(ZDOID zdoid) => $"{zdoid.UserID}:{zdoid.ID}";
+
+        private static bool IsDuplicatePosition(TrackedItem item)
+        {
+            foreach (var existing in rawPersistentPoints.Values)
+            {
+                if (existing.DisplayName == item.DisplayName && Vector3.Distance(existing.Position, item.Position) <= DuplicatePointRadius)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         // Re-derives which categories should currently be visible and adds/removes minimap pins
         // accordingly. Cached cluster positions are never discarded here - disabling a category only
@@ -186,9 +211,33 @@ namespace ValheimRadar
             return null;
         }
 
+        // A cluster's icon is captured once, from whichever raw point first started it (see
+        // ClusteringEngine), and that same TrackedItem is reused for the rest of the session rather
+        // than re-evaluated - so if the very first resolution attempt happened before Jotunn's
+        // GUIManager had finished loading its icon atlas (most likely right after connecting, when
+        // persisted points are redrawn before the first real scan tick), the icon comes back null and
+        // would otherwise stay null forever. Retried here, on every pin update, so a pin that starts
+        // iconless self-heals within a tick or two once the atlas is actually ready, instead of
+        // staying blank for the rest of the session. Only resource categories have a PNG/vanilla-icon
+        // mapping to retry from (see GetDefaultIconForCategory) - creature icons are resolved fresh
+        // every scan tick already, so they aren't subject to this staleness.
+        private static Sprite TryResolveMissingIcon(string categoryKey, string rawName)
+        {
+            string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
+            if (string.IsNullOrEmpty(iconPng)) return null;
+
+            string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
+            return ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
+        }
+
         private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string displayName, string rawName, Sprite icon, bool isPersistent, string categoryKey)
         {
             bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
+
+            if (icon == null)
+            {
+                icon = TryResolveMissingIcon(categoryKey, rawName);
+            }
 
             if (activeClusterPins.TryGetValue(clusterKey, out PinEntry existing))
             {
@@ -296,6 +345,14 @@ namespace ValheimRadar
             string path = GetSaveFilePath(worldName);
             if (!File.Exists(path)) return;
 
+            // Save files written before position-based dedup was added (see IsDuplicatePosition) can
+            // contain multiple near-identical points for what is really one physical object (e.g. a
+            // wild Beehive re-recorded on every relog because its ZDOID isn't session-stable). Any
+            // such duplicate encountered here is silently dropped rather than loaded, and marks the
+            // store dirty so the next save rewrites the file without it - self-healing the save file
+            // over time instead of carrying the old duplicates forward forever.
+            bool droppedDuplicate = false;
+
             try
             {
                 foreach (string line in File.ReadAllLines(path))
@@ -319,25 +376,33 @@ namespace ValheimRadar
 
                     ZDOID zdoid = new ZDOID(userId, id);
                     string key = RawPointKey(zdoid);
-                    if (rawPersistentPoints.ContainsKey(key)) continue;
 
-                    string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
-                    string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
-                    Sprite icon = string.IsNullOrEmpty(iconPng)
-                        ? null
-                        : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
-
-                    rawPersistentPoints[key] = new TrackedItem
+                    TrackedItem candidate = new TrackedItem
                     {
                         Zdoid = zdoid,
                         Position = new Vector3(x, y, z),
                         DisplayName = displayName,
                         RawName = rawName,
-                        Icon = icon,
                         IsPersistent = true,
                         CategoryKey = categoryKey
                     };
+
+                    if (rawPersistentPoints.ContainsKey(key) || IsDuplicatePosition(candidate))
+                    {
+                        droppedDuplicate = true;
+                        continue;
+                    }
+
+                    string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
+                    string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
+                    candidate.Icon = string.IsNullOrEmpty(iconPng)
+                        ? null
+                        : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
+
+                    rawPersistentPoints[key] = candidate;
                 }
+
+                rawPointsDirty = droppedDuplicate;
             }
             catch (Exception ex)
             {
