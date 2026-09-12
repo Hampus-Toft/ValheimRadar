@@ -13,6 +13,13 @@ namespace ValheimRadar
         public float MaxDistance = 1f;
         public List<TrackedItem> Items = new List<TrackedItem>();
 
+        // Cluster key as of the last time this cluster's pin was pushed to the minimap. Only used for
+        // incrementally-maintained persistent clusters (see PinManager.SyncPersistentClusters), which -
+        // unlike transient clusters - persist as the same live object across ticks: adding an item can
+        // shift the centroid enough to cross a grid boundary in GetClusterKey(), and without this the
+        // old key's pin entry would never get evicted, leaving an orphaned duplicate pin behind.
+        public string LastSyncedKey;
+
         public Vector3 GetCentroid()
         {
             if (Items == null || Items.Count == 0) return Vector3.zero;

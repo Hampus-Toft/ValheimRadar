@@ -76,12 +76,13 @@ namespace ValheimRadar
                 // Freshly connected/reloaded - reload this world's previously discovered
                 // resource/structure points and draw them immediately (rather than waiting for the
                 // first scan tick) so the map doesn't start blank after a relog. Clustering runs
-                // through the exact same ClusterItems + SyncClusterPins path a live scan uses, so a
-                // reloaded pin is never out of step with what the next real scan would produce.
+                // through the exact same RebuildPersistentClusters + SyncPersistentClusters path a
+                // ClusterDistance change uses, so a reloaded pin is never out of step with what the
+                // next real scan would produce.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
                 PinManager.LoadWorldPins(currentWorldName);
-                List<ItemCluster> loadedClusters = ClusteringEngine.ClusterItems(PinManager.GetAllRawPersistentPoints(), ClusterDistance);
-                PinManager.SyncClusterPins(Minimap.instance, loadedClusters);
+                PinManager.RebuildPersistentClusters(ClusterDistance);
+                PinManager.SyncPersistentClusters(Minimap.instance);
                 wasActive = true;
             }
 
@@ -115,18 +116,19 @@ namespace ValheimRadar
                 if (!item.IsPersistent) transientItems.Add(item);
             }
 
-            // Persistent (resource/structure) points merge into the durable raw store here, then get
-            // clustered below from that FULL history - not just what's in range this tick - so a
-            // ClusterDistance change or a newly-discovered nearby point reclusters the whole known
-            // area consistently instead of leaving a stale, differently-counted duplicate pin behind.
-            PinManager.RecordRawPoints(detectedItems);
+            // Persistent (resource/structure) points merge into the durable raw store and are
+            // clustered incrementally here - only newly-discovered points touch existing clusters, so
+            // a session's full discovery history never gets reclustered from scratch on a normal tick
+            // (a ClusterDistance change is handled separately - see RecordRawPoints). Pin updates are
+            // then pushed only for whatever clusters actually changed.
+            PinManager.RecordRawPoints(detectedItems, ClusterDistance);
+            PinManager.SyncPersistentClusters(minimap);
 
-            List<TrackedItem> clusterInput = PinManager.GetAllRawPersistentPoints();
-            clusterInput.AddRange(transientItems);
-
-            List<ItemCluster> clusters = ClusteringEngine.ClusterItems(clusterInput, ClusterDistance);
-
-            PinManager.SyncClusterPins(minimap, clusters);
+            // Transient (creature) clusters are still fully rebuilt every tick, but the input here is
+            // just this tick's in-range detections - bounded by ScanRadius, not the ever-growing
+            // discovery history - so redoing it in full stays cheap.
+            List<ItemCluster> transientClusters = ClusteringEngine.ClusterItems(transientItems, ClusterDistance);
+            PinManager.SyncTransientClusters(minimap, transientClusters);
         }
     }
 }

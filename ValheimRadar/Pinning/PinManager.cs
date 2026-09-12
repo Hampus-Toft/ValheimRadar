@@ -24,16 +24,40 @@ namespace ValheimRadar
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
 
         // Every persistent (resource/structure) point ever discovered this session, keyed by its
-        // stable ZDOID. This - not activeClusterPins - is the source of truth clusters are (re)built
-        // from every tick (see RecordRawPoints/GetAllRawPersistentPoints, called from RadarPlugin).
-        // Storing raw points instead of a pre-aggregated cluster means a ClusterDistance change, or a
-        // newly-discovered point next to an old one, reclusters cleanly from scratch every time
-        // instead of leaving the old aggregate behind as an orphaned, differently-counted duplicate
-        // pin. Points are recorded regardless of whether their category is currently enabled (see
-        // ObjectEvaluator) so re-enabling a category later immediately repopulates already-scanned
-        // ground instead of requiring the player to walk it again.
+        // stable ZDOID. Source of truth for persistentClusters below, which is what pins are actually
+        // synced from (see RecordRawPoints/SyncPersistentClusters). Points are recorded regardless of
+        // whether their category is currently enabled (see ObjectEvaluator) so re-enabling a category
+        // later immediately repopulates already-scanned ground instead of requiring the player to walk
+        // it again.
         private static readonly Dictionary<string, TrackedItem> rawPersistentPoints = new Dictionary<string, TrackedItem>();
         private static bool rawPointsDirty;
+
+        // Live persistent clusters, maintained incrementally: a newly-recorded raw point is folded
+        // into an existing cluster (or starts a new one) via ClusteringEngine.AddItem, rather than
+        // reclustering the full discovery history from scratch every tick (see RecordRawPoints). Only
+        // rebuilt wholesale when ClusterDistance changes (clusteredMaxDistance no longer matches) or on
+        // world load, since the greedy insertion-order clustering ClusteringEngine uses is only valid
+        // for a given maxDistance and a given item ordering.
+        private static readonly List<ItemCluster> persistentClusters = new List<ItemCluster>();
+
+        // Clusters touched since the last SyncPersistentClusters call - either just-created/appended-to
+        // by RecordRawPoints, or every cluster at once after a full rebuild. Draining this each sync
+        // means a normal tick only pushes pin updates for the handful of clusters that actually
+        // changed, instead of walking every persistent cluster discovered this session.
+        private static readonly List<ItemCluster> dirtyPersistentClusters = new List<ItemCluster>();
+
+        // maxDistance persistentClusters was last built/incrementally maintained against. A mismatch
+        // (ClusterDistance config change) triggers a full RebuildPersistentClusters on the next
+        // RecordRawPoints call.
+        private static float clusteredMaxDistance = -1f;
+
+        // Set by RebuildPersistentClusters. A full rebuild replaces every ItemCluster with a fresh
+        // instance (LastSyncedKey == null), so the per-cluster stale-key eviction SyncPersistentClusters
+        // normally relies on can't see what the *old* clustering's keys were - without this, pins left
+        // over from before the rebuild (e.g. every persistent pin, after a ClusterDistance change)
+        // would never get evicted. Tells the next SyncPersistentClusters call to instead reconcile
+        // activeClusterPins against the full new key set, once.
+        private static bool persistentFullResyncPending;
 
         // A newly-recorded point is treated as "already known" if it lands within this radius of an
         // existing point of the same DisplayName, even when its ZDOID doesn't match any recorded key.
@@ -64,13 +88,23 @@ namespace ValheimRadar
             activeClusterPins.Clear();
             rawPersistentPoints.Clear();
             rawPointsDirty = false;
+            persistentClusters.Clear();
+            dirtyPersistentClusters.Clear();
+            clusteredMaxDistance = -1f;
+            persistentFullResyncPending = false;
         }
 
         // Merges newly-scanned persistent points into the durable raw store, keyed by ZDOID so the
-        // same stationary world object is never recorded twice. Transient (creature) items are
-        // ignored here - see the class comment on rawPersistentPoints.
-        public static void RecordRawPoints(List<TrackedItem> items)
+        // same stationary world object is never recorded twice, and folds each genuinely-new point
+        // into persistentClusters incrementally. Transient (creature) items are ignored here - see the
+        // class comment on rawPersistentPoints.
+        public static void RecordRawPoints(List<TrackedItem> items, float maxDistance)
         {
+            if (maxDistance != clusteredMaxDistance)
+            {
+                RebuildPersistentClusters(maxDistance);
+            }
+
             foreach (var item in items)
             {
                 if (!item.IsPersistent) continue;
@@ -81,14 +115,29 @@ namespace ValheimRadar
 
                 rawPersistentPoints[key] = item;
                 rawPointsDirty = true;
+
+                ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, item, maxDistance);
+                if (!dirtyPersistentClusters.Contains(affected)) dirtyPersistentClusters.Add(affected);
             }
         }
 
-        // Full history of discovered persistent points, for RadarPlugin to combine with this tick's
-        // transient (creature) items before clustering - see rawPersistentPoints.
-        public static List<TrackedItem> GetAllRawPersistentPoints()
+        // Reclusters the full raw-point history from scratch - the only time persistent clustering
+        // pays the O(points * clusters) cost of ClusteringEngine.ClusterItems. Needed because the
+        // greedy insertion-order clustering it (and the incremental AddItem path) use is only valid
+        // for the maxDistance and ordering it was built with; a ClusterDistance change invalidates
+        // every existing cluster's boundaries. Marks every resulting cluster dirty so the next
+        // SyncPersistentClusters pushes a full resync, mirroring the old key-churn eviction that used
+        // to happen every tick (see ItemCluster.GetClusterKey / SyncPersistentClusters).
+        public static void RebuildPersistentClusters(float maxDistance)
         {
-            return new List<TrackedItem>(rawPersistentPoints.Values);
+            persistentClusters.Clear();
+            persistentClusters.AddRange(ClusteringEngine.ClusterItems(new List<TrackedItem>(rawPersistentPoints.Values), maxDistance));
+
+            dirtyPersistentClusters.Clear();
+            dirtyPersistentClusters.AddRange(persistentClusters);
+
+            clusteredMaxDistance = maxDistance;
+            persistentFullResyncPending = true;
         }
 
         private static string RawPointKey(ZDOID zdoid) => $"{zdoid.UserID}:{zdoid.ID}";
@@ -131,7 +180,11 @@ namespace ValheimRadar
             }
         }
 
-        public static void SyncClusterPins(Minimap minimap, List<ItemCluster> clusters)
+        // Syncs transient (creature) clusters - rebuilt fresh every tick by the caller from just this
+        // tick's in-range detections (bounded by ScanRadius, not the discovery history), so a full
+        // add/remove pass here stays cheap. Persistent clusters are handled separately, incrementally,
+        // by SyncPersistentClusters below.
+        public static void SyncTransientClusters(Minimap minimap, List<ItemCluster> clusters)
         {
             HashSet<string> currentScanKeys = new HashSet<string>();
 
@@ -141,29 +194,16 @@ namespace ValheimRadar
                 if (string.IsNullOrEmpty(key)) continue;
 
                 currentScanKeys.Add(key);
-                Vector3 centerPos = cluster.GetCentroid();
-                string label = cluster.GetLabel();
-
-                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, key, cluster.GetCentroid(), cluster.GetLabel(), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
             }
 
             List<string> toRemove = new List<string>();
             foreach (var kvp in activeClusterPins)
             {
+                if (kvp.Value.IsPersistent) continue; // managed by SyncPersistentClusters
                 if (currentScanKeys.Contains(kvp.Key)) continue;
 
-                if (kvp.Value.IsPersistent)
-                {
-                    // Persistent clusters are rebuilt every tick from the FULL raw point history
-                    // (see rawPersistentPoints), not just what's in range right now, so a persistent
-                    // key going missing can only mean reclustering produced a different key for the
-                    // same underlying points (e.g. ClusterDistance changed, or a new nearby discovery
-                    // merged two clusters) - safe, and necessary, to evict so it doesn't linger as an
-                    // orphaned duplicate alongside the pin that replaced it.
-                    if (kvp.Value.Pin != null) minimap.RemovePin(kvp.Value.Pin);
-                    toRemove.Add(kvp.Key);
-                }
-                else if (ObjectEvaluator.IsCategoryEnabled(kvp.Value.CategoryKey))
+                if (ObjectEvaluator.IsCategoryEnabled(kvp.Value.CategoryKey))
                 {
                     // Transient (creature) cluster genuinely left scan range - clean it up. A
                     // disabled creature category is left alone even if absent from this scan, so its
@@ -174,6 +214,65 @@ namespace ValheimRadar
             }
 
             foreach (var key in toRemove) activeClusterPins.Remove(key);
+        }
+
+        // Pushes pending persistent-cluster changes onto the minimap: clusters newly created or
+        // appended to since the last call (see RecordRawPoints), or every cluster at once after a
+        // ClusterDistance-triggered full rebuild (see RebuildPersistentClusters). Unlike
+        // SyncTransientClusters this never walks the full discovery history - only the clusters that
+        // actually changed this tick get touched, which is what keeps a large, long-explored world
+        // from getting slower to scan over a session.
+        public static void SyncPersistentClusters(Minimap minimap)
+        {
+            if (minimap == null) return;
+            if (dirtyPersistentClusters.Count == 0 && !persistentFullResyncPending) return;
+
+            // Only populated (and only consulted) after a full rebuild - see the removal pass below.
+            HashSet<string> syncedKeys = persistentFullResyncPending ? new HashSet<string>() : null;
+
+            foreach (var cluster in dirtyPersistentClusters)
+            {
+                string newKey = cluster.GetClusterKey();
+                if (string.IsNullOrEmpty(newKey)) continue;
+
+                if (cluster.LastSyncedKey != null && cluster.LastSyncedKey != newKey &&
+                    activeClusterPins.TryGetValue(cluster.LastSyncedKey, out PinEntry stale))
+                {
+                    // Adding an item shifted this cluster's centroid across a GetClusterKey() grid
+                    // boundary - evict the old key's entry so it doesn't linger as an orphaned
+                    // duplicate pin alongside the one about to be (re)created under the new key.
+                    if (stale.Pin != null) minimap.RemovePin(stale.Pin);
+                    activeClusterPins.Remove(cluster.LastSyncedKey);
+                }
+
+                UpdateOrCreatePin(minimap, newKey, cluster.GetCentroid(), cluster.GetLabel(), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                cluster.LastSyncedKey = newKey;
+                syncedKeys?.Add(newKey);
+            }
+
+            dirtyPersistentClusters.Clear();
+
+            if (persistentFullResyncPending)
+            {
+                // A full rebuild replaced every persistent cluster object, so per-cluster LastSyncedKey
+                // tracking above can't see the pre-rebuild key set. Reconcile directly against
+                // activeClusterPins instead: any persistent entry not among the keys just (re)synced
+                // belongs to a cluster that no longer exists post-rebuild (e.g. a ClusterDistance
+                // change merged or split it) and would otherwise linger as an orphaned duplicate pin.
+                List<string> toRemove = new List<string>();
+                foreach (var kvp in activeClusterPins)
+                {
+                    if (kvp.Value.IsPersistent && !syncedKeys.Contains(kvp.Key)) toRemove.Add(kvp.Key);
+                }
+
+                foreach (var key in toRemove)
+                {
+                    if (activeClusterPins.TryGetValue(key, out PinEntry entry) && entry.Pin != null) minimap.RemovePin(entry.Pin);
+                    activeClusterPins.Remove(key);
+                }
+
+                persistentFullResyncPending = false;
+            }
         }
 
         /// <summary>
@@ -332,9 +431,9 @@ namespace ValheimRadar
         // Restores previously discovered resource/structure points for this world into the raw store
         // (see rawPersistentPoints), so the map doesn't start blank after a relog. Called once right
         // after connecting, before the first scan tick. Does not touch the minimap itself - the caller
-        // is expected to cluster GetAllRawPersistentPoints() and run it through SyncClusterPins so
-        // loaded points are drawn through the exact same path a live scan uses, instead of a separate
-        // one that could drift out of sync with it (e.g. after a ClusterDistance change).
+        // is expected to follow up with RebuildPersistentClusters + SyncPersistentClusters so loaded
+        // points are drawn through the exact same path a live scan uses, instead of a separate one
+        // that could drift out of sync with it (e.g. after a ClusterDistance change).
         public static void LoadWorldPins(string worldName)
         {
             rawPersistentPoints.Clear();
