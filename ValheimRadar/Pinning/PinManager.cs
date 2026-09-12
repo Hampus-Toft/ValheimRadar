@@ -63,20 +63,30 @@ namespace ValheimRadar
             foreach (var key in toRemove) activeClusterPins.Remove(key);
         }
 
-        public static Minimap.PinType ResolvePerObjectPin(string rawName, string categoryDefaultPng)
+        public static Minimap.PinType ResolvePerObjectPin(string rawName, string categoryDefaultPng, string vanillaItemPrefab = null)
         {
             string cleanKey = ObjectEvaluator.StripKnownPrefixes(rawName).ToLower();
 
+            // 1. User-supplied PNG for this exact type (e.g. MoreMapPins/wolf.png).
             string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
             if (File.Exists(specificPath))
             {
                 return CustomPinLoader.RegisterPngAsPin(specificPath, Minimap.PinType.Icon3);
             }
 
+            // 2. User-supplied PNG for the whole category (e.g. MoreMapPins/monster.png).
             string categoryPath = Path.Combine(ConfigIconFolder, categoryDefaultPng);
             if (File.Exists(categoryPath))
             {
                 return CustomPinLoader.RegisterPngAsPin(categoryPath, Minimap.PinType.Icon3);
+            }
+
+            // 3. No custom PNG anywhere - fall back to the vanilla game's own icon for this type
+            // (creature Trophy icon / resource pickup icon) so distinct types still look distinct.
+            if (VanillaIconResolver.TryResolveIcon(cleanKey, vanillaItemPrefab, out Sprite vanillaSprite))
+            {
+                string cacheKey = VanillaIconResolver.GetCacheKey(cleanKey, vanillaItemPrefab);
+                return CustomPinLoader.RegisterSpriteAsPin(cacheKey, vanillaSprite, Minimap.PinType.Icon3);
             }
 
             return Minimap.PinType.Icon3;
