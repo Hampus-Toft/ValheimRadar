@@ -34,7 +34,8 @@ namespace ValheimRadar
                         Icon = item.Icon,
                         IsPersistent = item.IsPersistent,
                         CategoryKey = item.CategoryKey,
-                        RawName = item.RawName
+                        RawName = item.RawName,
+                        MaxDistance = maxDistance
                     };
                     newCluster.Items.Add(item);
                     clusters.Add(newCluster);

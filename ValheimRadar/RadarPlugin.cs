@@ -68,7 +68,8 @@ namespace ValheimRadar
                 // Freshly connected/reloaded - reload this world's previously discovered
                 // resource/structure pins so the map doesn't start blank after a relog.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
-                PinManager.LoadWorldPins(currentWorldName, Minimap.instance);
+                float loadClusterDist = RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
+                PinManager.LoadWorldPins(currentWorldName, Minimap.instance, loadClusterDist);
                 wasActive = true;
             }
 

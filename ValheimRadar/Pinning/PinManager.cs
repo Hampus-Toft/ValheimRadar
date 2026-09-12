@@ -16,6 +16,7 @@ namespace ValheimRadar
             public string CategoryKey;
             public Vector3 Position;
             public string Label;
+            public string DisplayName;
             public string RawName;
             public Sprite Icon;
         }
@@ -80,7 +81,7 @@ namespace ValheimRadar
                 Vector3 centerPos = cluster.GetCentroid();
                 string label = cluster.GetLabel();
 
-                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
             }
 
             // Persistent (resource/structure) pins stay on the map after their cluster leaves scan
@@ -136,7 +137,7 @@ namespace ValheimRadar
             return null;
         }
 
-        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string rawName, Sprite icon, bool isPersistent, string categoryKey)
+        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string displayName, string rawName, Sprite icon, bool isPersistent, string categoryKey)
         {
             bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
 
@@ -144,6 +145,7 @@ namespace ValheimRadar
             {
                 existing.Position = pos;
                 existing.Label = name;
+                existing.DisplayName = displayName;
                 existing.RawName = rawName;
                 existing.Icon = icon;
                 existing.CategoryKey = categoryKey;
@@ -185,6 +187,7 @@ namespace ValheimRadar
                     CategoryKey = categoryKey,
                     Position = pos,
                     Label = name,
+                    DisplayName = displayName,
                     RawName = rawName,
                     Icon = icon
                 });
@@ -199,6 +202,11 @@ namespace ValheimRadar
         //
         // Serialized as one pipe-delimited line per cluster (Unity's JsonUtility needs an assembly
         // this project doesn't reference, and the data is simple enough not to warrant adding one).
+        //
+        // The cluster key and display label are deliberately NOT persisted - both are re-derived from
+        // (position, DisplayName) via ItemCluster on load, the same way a live scan computes them, so
+        // a reloaded pin lines up with whatever a fresh scan produces instead of drifting into a
+        // separate, overlapping duplicate.
         public static void SaveWorldPins(string worldName)
         {
             if (!isDirty || string.IsNullOrEmpty(worldName)) return;
@@ -210,11 +218,10 @@ namespace ValheimRadar
 
                 PinEntry e = kvp.Value;
                 lines.Add(string.Join("|",
-                    Escape(kvp.Key),
                     e.Position.x.ToString(CultureInfo.InvariantCulture),
                     e.Position.y.ToString(CultureInfo.InvariantCulture),
                     e.Position.z.ToString(CultureInfo.InvariantCulture),
-                    Escape(e.Label),
+                    Escape(e.DisplayName),
                     Escape(e.RawName),
                     Escape(e.CategoryKey)));
             }
@@ -233,7 +240,12 @@ namespace ValheimRadar
 
         // Restores previously discovered resource/structure pins for this world so the map doesn't
         // start blank after a relog. Called once right after connecting, before the first scan tick.
-        public static void LoadWorldPins(string worldName, Minimap minimap)
+        //
+        // clusterDistance must match the value the live scan clusters with (RadarConfig.ClusterDistance)
+        // so a reloaded pin's re-derived key lands in the same spatial bucket a fresh scan of the same
+        // spot would compute - otherwise the loaded pin and the next scan's pin for the same resource
+        // patch would carry different keys and stack as two overlapping pins instead of one being updated.
+        public static void LoadWorldPins(string worldName, Minimap minimap, float clusterDistance)
         {
             activeClusterPins.Clear();
             isDirty = false;
@@ -250,20 +262,28 @@ namespace ValheimRadar
                     if (string.IsNullOrEmpty(line)) continue;
 
                     string[] parts = line.Split('|');
-                    if (parts.Length != 7) continue;
+                    if (parts.Length != 6) continue;
 
-                    string key = Unescape(parts[0]);
-                    if (string.IsNullOrEmpty(key) || activeClusterPins.ContainsKey(key)) continue;
+                    if (!float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) continue;
+                    if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)) continue;
+                    if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
 
-                    if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) continue;
-                    if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)) continue;
-                    if (!float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
+                    string displayName = Unescape(parts[3]);
+                    string rawName = Unescape(parts[4]);
+                    string categoryKey = Unescape(parts[5]);
 
-                    string label = Unescape(parts[4]);
-                    string rawName = Unescape(parts[5]);
-                    string categoryKey = Unescape(parts[6]);
+                    if (string.IsNullOrEmpty(displayName)) continue;
 
                     Vector3 pos = new Vector3(x, y, z);
+
+                    // Re-derive the key and label the same way a live scan would, from a single-item
+                    // cluster at this position - see the comment above.
+                    ItemCluster syntheticCluster = new ItemCluster { DisplayName = displayName, MaxDistance = clusterDistance };
+                    syntheticCluster.Items.Add(new TrackedItem { Position = pos, DisplayName = displayName });
+                    string key = syntheticCluster.GetClusterKey();
+                    string label = syntheticCluster.GetLabel();
+
+                    if (string.IsNullOrEmpty(key) || activeClusterPins.ContainsKey(key)) continue;
 
                     string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
                     string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
@@ -286,6 +306,7 @@ namespace ValheimRadar
                         CategoryKey = categoryKey,
                         Position = pos,
                         Label = label,
+                        DisplayName = displayName,
                         RawName = rawName,
                         Icon = icon
                     };

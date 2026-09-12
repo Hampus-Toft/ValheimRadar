@@ -1,6 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using UnityEngine;
 
 namespace ValheimRadar
@@ -12,6 +10,7 @@ namespace ValheimRadar
         public bool IsPersistent;
         public string CategoryKey;
         public string RawName;
+        public float MaxDistance = 1f;
         public List<TrackedItem> Items = new List<TrackedItem>();
 
         public Vector3 GetCentroid()
@@ -27,19 +26,23 @@ namespace ValheimRadar
             return Items.Count > 1 ? $"{Items.Count}x {DisplayName}" : DisplayName;
         }
 
+        // Keyed on the cluster's spatial location (quantized to the clustering distance), not the
+        // exact set of member ZDOIDs. Which individual items land inside a stationary resource
+        // cluster on any given scan tick is volatile - it depends on scan-radius timing, ZDO load
+        // order after a relog, etc. - while the cluster's location is not. A membership-based key
+        // changes every time that composition shifts, and PinManager (correctly) treats a changed
+        // key as a brand-new cluster, permanently stacking duplicate persistent pins ("Dandelion",
+        // "2x Dandelion", "3x Dandelion", ...) for what is really a single spot.
         public string GetClusterKey()
         {
             if (Items.Count == 0) return string.Empty;
 
-            var sortedIds = Items
-                .Select(item => $"{item.Zdoid.UserID}:{item.Zdoid.ID}")
-                .OrderBy(id => id, System.StringComparer.Ordinal);
+            Vector3 centroid = GetCentroid();
+            float gridSize = MaxDistance > 0f ? MaxDistance : 1f;
+            int gx = Mathf.RoundToInt(centroid.x / gridSize);
+            int gz = Mathf.RoundToInt(centroid.z / gridSize);
 
-            var sb = new StringBuilder();
-            sb.Append(DisplayName).Append('_');
-            foreach (var id in sortedIds) sb.Append(id).Append('|');
-
-            return sb.ToString();
+            return $"{DisplayName}_{gx}_{gz}";
         }
     }
 }
