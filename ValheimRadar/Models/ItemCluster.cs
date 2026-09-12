@@ -10,6 +10,8 @@ namespace ValheimRadar
         public string DisplayName;
         public Minimap.PinType PinType;
         public bool IsPersistent;
+        public string CategoryKey;
+        public string RawName;
         public List<TrackedItem> Items = new List<TrackedItem>();
 
         public Vector3 GetCentroid()

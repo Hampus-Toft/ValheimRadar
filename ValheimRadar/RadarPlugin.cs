@@ -14,8 +14,14 @@ namespace ValheimRadar
         public const string PluginName = "ValheimRadar";
         public const string PluginVersion = "1.4.0";
 
+        // How often to flush newly-discovered persistent (resource/structure) pin positions to
+        // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
+        private const float PersistSaveInterval = 30f;
+
         private float timer = 0f;
+        private float saveTimer = 0f;
         private bool wasActive = false;
+        private string currentWorldName;
 
         private void Awake()
         {
@@ -27,37 +33,58 @@ namespace ValheimRadar
         private void OnDestroy()
         {
             Config.SettingChanged -= OnConfigurationChanged;
+            PinManager.SaveWorldPins(currentWorldName);
             PinManager.ClearAllPins();
         }
 
         private void OnConfigurationChanged(object sender, EventArgs e)
         {
-            // Only drop transient (creature) pins so filter changes take effect immediately -
-            // persistent resource/structure pins are left in place.
-            PinManager.ClearAllPins(includePersistent: false);
+            // Re-derive which categories should be visible and add/remove their minimap pins
+            // accordingly - cached cluster positions are never discarded here, so re-enabling a
+            // category instantly redraws its pins at their last known location instead of waiting
+            // for the player to walk back into scan range.
+            PinManager.RefreshCategoryVisibility(Minimap.instance);
         }
 
         private void Update()
         {
             if (Player.m_localPlayer == null || Minimap.instance == null)
             {
-                // Player disconnected or the world unloaded - drop stale pin state now
-                // rather than letting activeClusterPins hold onto pins from the old session.
+                // Player disconnected or the world unloaded - persist what we've found so far and
+                // drop in-memory pin state now, since it belongs to a Minimap instance that's about
+                // to become invalid anyway.
                 if (wasActive)
                 {
-                    PinManager.ClearAllPins(includePersistent: false);
+                    PinManager.SaveWorldPins(currentWorldName);
+                    PinManager.ClearAllPins();
                     wasActive = false;
+                    currentWorldName = null;
+                    saveTimer = 0f;
                 }
                 return;
             }
 
-            wasActive = true;
+            if (!wasActive)
+            {
+                // Freshly connected/reloaded - reload this world's previously discovered
+                // resource/structure pins so the map doesn't start blank after a relog.
+                currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
+                PinManager.LoadWorldPins(currentWorldName, Minimap.instance);
+                wasActive = true;
+            }
 
             timer += Time.deltaTime;
             if (timer < RadarConfig.UpdateInterval.Value) return;
             timer = 0f;
 
             ScanAndPinObjects(Minimap.instance);
+
+            saveTimer += Time.deltaTime;
+            if (saveTimer >= PersistSaveInterval)
+            {
+                saveTimer = 0f;
+                PinManager.SaveWorldPins(currentWorldName);
+            }
         }
 
         private void ScanAndPinObjects(Minimap minimap)
@@ -81,7 +108,7 @@ namespace ValheimRadar
 
                 string rawName = netView.gameObject.name.Replace("(Clone)", "").Trim().ToLower();
 
-                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Minimap.PinType pinType, out bool isPersistent))
+                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Minimap.PinType pinType, out bool isPersistent, out string categoryKey))
                 {
                     processedZdoids.Add(zdoid);
                     detectedItems.Add(new TrackedItem
@@ -91,7 +118,8 @@ namespace ValheimRadar
                         RawName = rawName,
                         DisplayName = displayName,
                         PinType = pinType,
-                        IsPersistent = isPersistent
+                        IsPersistent = isPersistent,
+                        CategoryKey = categoryKey
                     });
                 }
             }

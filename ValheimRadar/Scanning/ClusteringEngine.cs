@@ -32,7 +32,9 @@ namespace ValheimRadar
                     {
                         DisplayName = item.DisplayName,
                         PinType = item.PinType,
-                        IsPersistent = item.IsPersistent
+                        IsPersistent = item.IsPersistent,
+                        CategoryKey = item.CategoryKey,
+                        RawName = item.RawName
                     };
                     newCluster.Items.Add(item);
                     clusters.Add(newCluster);
