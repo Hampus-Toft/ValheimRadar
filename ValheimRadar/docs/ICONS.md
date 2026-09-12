@@ -9,11 +9,11 @@ For every trackable object, `PinManager.ResolvePerObjectPin` (in
 `Pinning/PinManager.cs`) resolves an icon in this order, stopping at the first
 one that produces a result:
 
-1. **Specific PNG override** - `<BepInEx config>/MoreMapPins/<key>.png`, where
+1. **Specific PNG override** - `<BepInEx config>/ValheimRadar/<key>.png`, where
    `<key>` is the object's cleaned prefab name (see [Naming key](#naming-key)
    below). Lets you give a single species/structure its own icon, e.g.
    `wolf.png` vs `boar.png`, or `crypt.png`.
-2. **Category PNG override** - `<BepInEx config>/MoreMapPins/<category>.png`,
+2. **Category PNG override** - `<BepInEx config>/ValheimRadar/<category>.png`,
    e.g. `monster.png`, `animal.png`, `berry.png`, `dungeon.png`. Used when no
    type-specific PNG exists; applies to every object in that category.
 3. **Vanilla game icon** - if neither PNG exists, the mod pulls an icon
@@ -45,8 +45,8 @@ closely.
 
 ## Adding a custom icon
 
-1. Find (or create) `<BepInEx config>/MoreMapPins/` next to your config file
-   (`BepInEx/config/MoreMapPins/`).
+1. Find (or create) `<BepInEx config>/ValheimRadar/` next to your config file
+   (`BepInEx/config/ValheimRadar/`).
 2. Drop in a PNG named either:
    - `<key>.png` for one specific type (e.g. `wolf.png`), or
    - `<category>.png` to reskin a whole category (e.g. `monster.png`).

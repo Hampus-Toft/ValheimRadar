@@ -23,7 +23,7 @@ namespace ValheimRadar
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
         private static bool isDirty;
 
-        private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "MoreMapPins");
+        private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar");
         private static string PinDataFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar", "PinData");
 
         // Removes every live pin from the minimap and drops all in-memory tracking state. Called on
@@ -104,14 +104,14 @@ namespace ValheimRadar
         {
             string cleanKey = ObjectEvaluator.StripKnownPrefixes(rawName).ToLower();
 
-            // 1. User-supplied PNG for this exact type (e.g. MoreMapPins/wolf.png).
+            // 1. User-supplied PNG for this exact type (e.g. ValheimRadar/wolf.png).
             string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
             if (File.Exists(specificPath))
             {
                 return CustomPinLoader.RegisterPngAsPin(specificPath, Minimap.PinType.Icon3);
             }
 
-            // 2. User-supplied PNG for the whole category (e.g. MoreMapPins/monster.png).
+            // 2. User-supplied PNG for the whole category (e.g. ValheimRadar/monster.png).
             string categoryPath = Path.Combine(ConfigIconFolder, categoryDefaultPng);
             if (File.Exists(categoryPath))
             {
