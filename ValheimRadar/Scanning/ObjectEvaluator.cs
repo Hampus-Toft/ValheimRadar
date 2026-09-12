@@ -13,6 +13,7 @@ namespace ValheimRadar
             public readonly Func<bool> Enabled;
             public readonly Func<GameObject, string, bool> Matches;
             public readonly string IconPng;
+            public readonly string VanillaItemPrefab;
 
             public ResourceRule(string id, Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng)
             {
@@ -20,6 +21,7 @@ namespace ValheimRadar
                 Enabled = enabled;
                 Matches = matches;
                 IconPng = iconPng;
+                VanillaItemPrefab = vanillaItemPrefab;
             }
         }
 
@@ -157,7 +159,7 @@ namespace ValheimRadar
             {
                 if (rule.Enabled() && rule.Matches(go, nameLower))
                 {
-                    pinType = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng);
+                    pinType = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng, rule.VanillaItemPrefab);
                     isPersistent = true;
                     categoryKey = $"resource:{rule.Id}";
                     return true;
