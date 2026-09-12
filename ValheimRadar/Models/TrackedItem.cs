@@ -9,5 +9,6 @@ namespace ValheimRadar
         public string RawName;
         public string DisplayName;
         public Minimap.PinType PinType;
+        public bool IsPersistent;
     }
 }

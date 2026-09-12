@@ -32,7 +32,9 @@ namespace ValheimRadar
 
         private void OnConfigurationChanged(object sender, EventArgs e)
         {
-            PinManager.ClearAllPins();
+            // Only drop transient (creature) pins so filter changes take effect immediately -
+            // persistent resource/structure pins are left in place.
+            PinManager.ClearAllPins(includePersistent: false);
         }
 
         private void Update()
@@ -43,7 +45,7 @@ namespace ValheimRadar
                 // rather than letting activeClusterPins hold onto pins from the old session.
                 if (wasActive)
                 {
-                    PinManager.ClearAllPins();
+                    PinManager.ClearAllPins(includePersistent: false);
                     wasActive = false;
                 }
                 return;
@@ -79,7 +81,7 @@ namespace ValheimRadar
 
                 string rawName = netView.gameObject.name.Replace("(Clone)", "").Trim().ToLower();
 
-                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Minimap.PinType pinType))
+                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Minimap.PinType pinType, out bool isPersistent))
                 {
                     processedZdoids.Add(zdoid);
                     detectedItems.Add(new TrackedItem
@@ -88,7 +90,8 @@ namespace ValheimRadar
                         Position = netView.transform.position,
                         RawName = rawName,
                         DisplayName = displayName,
-                        PinType = pinType
+                        PinType = pinType,
+                        IsPersistent = isPersistent
                     });
                 }
             }

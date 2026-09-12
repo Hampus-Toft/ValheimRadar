@@ -31,7 +31,8 @@ namespace ValheimRadar
                     ItemCluster newCluster = new ItemCluster
                     {
                         DisplayName = item.DisplayName,
-                        PinType = item.PinType
+                        PinType = item.PinType,
+                        IsPersistent = item.IsPersistent
                     };
                     newCluster.Items.Add(item);
                     clusters.Add(newCluster);

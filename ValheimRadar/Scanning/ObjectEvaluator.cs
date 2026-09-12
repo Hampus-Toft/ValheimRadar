@@ -70,10 +70,11 @@ namespace ValheimRadar
             new ResourceRule(() => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackTarPits.Value, (go, n) => n.Contains("tarpit") || n.Contains("tar_pit"), "tarpit.png"),
         };
 
-        public static bool ShouldPinGameObject(GameObject go, string nameLower, out string displayName, out Minimap.PinType pinType)
+        public static bool ShouldPinGameObject(GameObject go, string nameLower, out string displayName, out Minimap.PinType pinType, out bool isPersistent)
         {
             displayName = string.Empty;
             pinType = Minimap.PinType.Icon3;
+            isPersistent = false;
 
             Character character = go.GetComponent<Character>();
 
@@ -120,12 +121,14 @@ namespace ValheimRadar
                 }
             }
 
-            // RESOURCES & STRUCTURES (berries through ruins/locations)
+            // RESOURCES & STRUCTURES (berries through ruins/locations) - these are stationary, so
+            // their pins persist on the minimap even after the player leaves scan range.
             foreach (var rule in ResourceRules)
             {
                 if (rule.Enabled() && rule.Matches(go, nameLower))
                 {
                     pinType = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng);
+                    isPersistent = true;
                     return true;
                 }
             }

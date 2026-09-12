@@ -7,18 +7,29 @@ namespace ValheimRadar
 {
     public static class PinManager
     {
-        private static readonly Dictionary<string, Minimap.PinData> activeClusterPins = new Dictionary<string, Minimap.PinData>();
+        private class PinEntry
+        {
+            public Minimap.PinData Pin;
+            public bool IsPersistent;
+        }
+
+        private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "MoreMapPins");
 
-        public static void ClearAllPins()
+        public static void ClearAllPins(bool includePersistent = true)
         {
             if (Minimap.instance == null) return;
 
+            List<string> toRemove = new List<string>();
             foreach (var kvp in activeClusterPins)
             {
-                if (kvp.Value != null) Minimap.instance.RemovePin(kvp.Value);
+                if (!includePersistent && kvp.Value.IsPersistent) continue;
+
+                if (kvp.Value.Pin != null) Minimap.instance.RemovePin(kvp.Value.Pin);
+                toRemove.Add(kvp.Key);
             }
-            activeClusterPins.Clear();
+
+            foreach (var key in toRemove) activeClusterPins.Remove(key);
         }
 
         public static void SyncClusterPins(Minimap minimap, List<ItemCluster> clusters)
@@ -34,15 +45,17 @@ namespace ValheimRadar
                 Vector3 centerPos = cluster.GetCentroid();
                 string label = cluster.GetLabel();
 
-                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.PinType);
+                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.PinType, cluster.IsPersistent);
             }
 
+            // Persistent (resource/structure) pins stay on the map after their cluster leaves scan
+            // range, since they're stationary - only transient (creature) pins get cleaned up here.
             List<string> toRemove = new List<string>();
             foreach (var kvp in activeClusterPins)
             {
-                if (!currentScanKeys.Contains(kvp.Key))
+                if (!currentScanKeys.Contains(kvp.Key) && !kvp.Value.IsPersistent)
                 {
-                    if (kvp.Value != null) minimap.RemovePin(kvp.Value);
+                    if (kvp.Value.Pin != null) minimap.RemovePin(kvp.Value.Pin);
                     toRemove.Add(kvp.Key);
                 }
             }
@@ -69,20 +82,21 @@ namespace ValheimRadar
             return Minimap.PinType.Icon3;
         }
 
-        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, Minimap.PinType pinType)
+        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, Minimap.PinType pinType, bool isPersistent)
         {
-            if (activeClusterPins.TryGetValue(clusterKey, out Minimap.PinData existingPin))
+            if (activeClusterPins.TryGetValue(clusterKey, out PinEntry existing))
             {
-                if (existingPin != null)
+                if (existing.Pin != null)
                 {
-                    existingPin.m_pos = pos;
-                    existingPin.m_name = name;
+                    existing.Pin.m_pos = pos;
+                    existing.Pin.m_name = name;
                 }
+                existing.IsPersistent = isPersistent;
             }
             else
             {
                 Minimap.PinData newPin = minimap.AddPin(pos, pinType, name, save: false, isChecked: false);
-                activeClusterPins.Add(clusterKey, newPin);
+                activeClusterPins.Add(clusterKey, new PinEntry { Pin = newPin, IsPersistent = isPersistent });
             }
         }
     }
