@@ -17,7 +17,7 @@ namespace ValheimRadar
             public Vector3 Position;
             public string Label;
             public string RawName;
-            public Minimap.PinType PinType;
+            public Sprite Icon;
         }
 
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
@@ -56,7 +56,8 @@ namespace ValheimRadar
 
                 if (shouldShow && entry.Pin == null)
                 {
-                    entry.Pin = minimap.AddPin(entry.Position, entry.PinType, entry.Label, save: false, isChecked: false);
+                    entry.Pin = minimap.AddPin(entry.Position, Minimap.PinType.Icon3, entry.Label, save: false, isChecked: false);
+                    entry.Pin.m_icon = entry.Icon;
                 }
                 else if (!shouldShow && entry.Pin != null)
                 {
@@ -79,7 +80,7 @@ namespace ValheimRadar
                 Vector3 centerPos = cluster.GetCentroid();
                 string label = cluster.GetLabel();
 
-                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.RawName, cluster.PinType, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, key, centerPos, label, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
             }
 
             // Persistent (resource/structure) pins stay on the map after their cluster leaves scan
@@ -100,36 +101,42 @@ namespace ValheimRadar
             foreach (var key in toRemove) activeClusterPins.Remove(key);
         }
 
-        public static Minimap.PinType ResolvePerObjectPin(string rawName, string categoryDefaultPng, string vanillaItemPrefab = null)
+        /// <summary>
+        /// Resolves the minimap icon Sprite for a tracked object, or null to use the vanilla
+        /// Icon3 pin's own default sprite. See docs/ICONS.md for the full resolution order.
+        /// </summary>
+        public static Sprite ResolvePerObjectPin(string rawName, string categoryDefaultPng, string vanillaIconName = null)
         {
             string cleanKey = ObjectEvaluator.StripKnownPrefixes(rawName).ToLower();
 
             // 1. User-supplied PNG for this exact type (e.g. ValheimRadar/wolf.png).
             string specificPath = Path.Combine(ConfigIconFolder, $"{cleanKey}.png");
-            if (File.Exists(specificPath))
+            Sprite specificSprite = IconLoader.LoadPng(specificPath);
+            if (specificSprite != null)
             {
-                return CustomPinLoader.RegisterPngAsPin(specificPath, Minimap.PinType.Icon3);
+                return specificSprite;
             }
 
             // 2. User-supplied PNG for the whole category (e.g. ValheimRadar/monster.png).
             string categoryPath = Path.Combine(ConfigIconFolder, categoryDefaultPng);
-            if (File.Exists(categoryPath))
+            Sprite categorySprite = IconLoader.LoadPng(categoryPath);
+            if (categorySprite != null)
             {
-                return CustomPinLoader.RegisterPngAsPin(categoryPath, Minimap.PinType.Icon3);
+                return categorySprite;
             }
 
-            // 3. No custom PNG anywhere - fall back to the vanilla game's own icon for this type
-            // (creature Trophy icon / resource pickup icon) so distinct types still look distinct.
-            if (VanillaIconResolver.TryResolveIcon(cleanKey, vanillaItemPrefab, out Sprite vanillaSprite))
+            // 3. No custom PNG anywhere - fall back to Valheim's own icon for this type (creature
+            // trophy icon / resource pickup icon, via Jotunn's GUIManager) so distinct types still
+            // look distinct out of the box.
+            if (VanillaIconResolver.TryResolveIcon(cleanKey, vanillaIconName, out Sprite vanillaSprite))
             {
-                string cacheKey = VanillaIconResolver.GetCacheKey(cleanKey, vanillaItemPrefab);
-                return CustomPinLoader.RegisterSpriteAsPin(cacheKey, vanillaSprite, Minimap.PinType.Icon3);
+                return vanillaSprite;
             }
 
-            return Minimap.PinType.Icon3;
+            return null;
         }
 
-        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string rawName, Minimap.PinType pinType, bool isPersistent, string categoryKey)
+        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string rawName, Sprite icon, bool isPersistent, string categoryKey)
         {
             bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
 
@@ -138,13 +145,14 @@ namespace ValheimRadar
                 existing.Position = pos;
                 existing.Label = name;
                 existing.RawName = rawName;
-                existing.PinType = pinType;
+                existing.Icon = icon;
                 existing.CategoryKey = categoryKey;
 
                 if (existing.Pin != null)
                 {
                     existing.Pin.m_pos = pos;
                     existing.Pin.m_name = name;
+                    existing.Pin.m_icon = icon;
                 }
 
                 if (isPersistent && !existing.IsPersistent) isDirty = true;
@@ -152,7 +160,8 @@ namespace ValheimRadar
 
                 if (categoryEnabled && existing.Pin == null)
                 {
-                    existing.Pin = minimap.AddPin(pos, pinType, name, save: false, isChecked: false);
+                    existing.Pin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: false);
+                    existing.Pin.m_icon = icon;
                 }
                 else if (!categoryEnabled && existing.Pin != null)
                 {
@@ -162,9 +171,12 @@ namespace ValheimRadar
             }
             else
             {
-                Minimap.PinData newPin = categoryEnabled
-                    ? minimap.AddPin(pos, pinType, name, save: false, isChecked: false)
-                    : null;
+                Minimap.PinData newPin = null;
+                if (categoryEnabled)
+                {
+                    newPin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: false);
+                    newPin.m_icon = icon;
+                }
 
                 activeClusterPins.Add(clusterKey, new PinEntry
                 {
@@ -174,7 +186,7 @@ namespace ValheimRadar
                     Position = pos,
                     Label = name,
                     RawName = rawName,
-                    PinType = pinType
+                    Icon = icon
                 });
 
                 if (isPersistent) isDirty = true;
@@ -253,18 +265,19 @@ namespace ValheimRadar
 
                     Vector3 pos = new Vector3(x, y, z);
 
-                    // Custom pin icon indices are only valid for the Minimap instance they were
-                    // registered against, so re-resolve the PinType for the current session instead
-                    // of persisting the raw enum value.
                     string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
-                    Minimap.PinType pinType = string.IsNullOrEmpty(iconPng)
-                        ? Minimap.PinType.Icon3
-                        : ResolvePerObjectPin(rawName, iconPng);
+                    string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
+                    Sprite icon = string.IsNullOrEmpty(iconPng)
+                        ? null
+                        : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
 
                     bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
-                    Minimap.PinData pin = categoryEnabled
-                        ? minimap.AddPin(pos, pinType, label, save: false, isChecked: false)
-                        : null;
+                    Minimap.PinData pin = null;
+                    if (categoryEnabled)
+                    {
+                        pin = minimap.AddPin(pos, Minimap.PinType.Icon3, label, save: false, isChecked: false);
+                        pin.m_icon = icon;
+                    }
 
                     activeClusterPins[key] = new PinEntry
                     {
@@ -274,7 +287,7 @@ namespace ValheimRadar
                         Position = pos,
                         Label = label,
                         RawName = rawName,
-                        PinType = pinType
+                        Icon = icon
                     };
                 }
             }

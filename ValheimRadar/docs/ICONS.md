@@ -17,12 +17,18 @@ one that produces a result:
    e.g. `monster.png`, `animal.png`, `berry.png`, `dungeon.png`. Used when no
    type-specific PNG exists; applies to every object in that category.
 3. **Vanilla game icon** - if neither PNG exists, the mod pulls an icon
-   Valheim already ships: a creature's Trophy item icon (Wolf ->
-   `TrophyWolf`'s icon), or a resource's pickup item icon (a Raspberry bush ->
-   the `Raspberry` item icon). See `Pinning/VanillaIconResolver.cs`. This is
-   what makes species/resources look distinct out of the box, with no PNGs
-   supplied at all.
-4. **Built-in fallback** - `Minimap.PinType.Icon3`, if nothing above resolved.
+   Valheim already ships, via [Jotunn](https://valheim-modding.github.io/Jotunn/)'s
+   `GUIManager.GetSprite(name)`: a creature's Trophy item icon (Wolf ->
+   `TrophyWolf`, Bear -> `TrophyBjorn`), or a resource's pickup item icon
+   (Raspberry bush -> `raspberry`, Copper deposit -> `copperore`). See
+   `Pinning/VanillaIconResolver.cs`. Every name used there is an exact,
+   verified sprite name from Valheim's own icon atlas (cross-checked against
+   Jotunn's generated
+   [sprite list](https://valheim-modding.github.io/Jotunn/data/gui/sprite-list.html)),
+   not a guessed naming convention - this is what makes species/resources
+   look distinct *and correct* out of the box, with no PNGs supplied at all.
+4. **Built-in fallback** - the vanilla `Minimap.PinType.Icon3` pin's own
+   default sprite, if nothing above resolved.
 
 Structures (chests, portals, dungeons/crypts, beehives, stone rings, ruins,
 runestones, tar pits) don't have a vanilla pickup icon to borrow, so step 3 is
@@ -53,42 +59,50 @@ closely.
 3. No restart needed - the file is picked up (and cached) the next scan tick
    after it appears on disk.
 
-Icons registered this way share Valheim's own `Minimap.m_icons` sprite list;
-they're invalidated and re-registered automatically whenever `Minimap.instance`
-changes (world reload/reconnect), so stale icons never leak across sessions.
+Icons loaded this way are plain Unity `Sprite`s assigned directly to each
+pin's `Minimap.PinData.m_icon` - unlike the old approach, there's no shared
+`Minimap.m_icons` list to register into or invalidate, so nothing can collide
+with icons another mod registers, and nothing needs to be re-registered across
+world reloads/reconnects.
 
 ## Vanilla icon mapping
 
 `VanillaIconResolver` maps:
 
-- **Creatures**: cleaned prefab key -> Trophy item prefab name, via an
-  explicit override table for the ones that don't follow the
-  `Trophy<Name>` convention (e.g. `troll` -> `TrophyForestTroll`, `ghost` ->
-  `TrophyWraith`, `dragon` -> `TrophyModer`), and a `"Trophy" + Capitalize(key)`
-  guess for anything else.
-- **Resources**: an explicit vanilla item prefab name attached to each
-  `ObjectEvaluator.ResourceRule` (e.g. raspberries -> `Raspberry`, flint ->
-  `Flint`, copper -> `CopperOre`).
+- **Creatures**: cleaned prefab key -> exact vanilla Trophy sprite name (e.g.
+  `troll` -> `TrophyForestTroll`, `bear` -> `TrophyBjorn`, `fuling` ->
+  `TrophyGoblin`), via an explicit table.
+- **Resources**: an explicit vanilla sprite name attached to each
+  `ObjectEvaluator.ResourceRule` (e.g. raspberries -> `raspberry`, flint ->
+  `flint`, copper -> `copperore`, tin -> `TinOre`).
 
-These mappings are **best-effort** - built from established Valheim modding
-conventions, not verified against a live game instance. A wrong or missing
-entry is harmless: `ObjectDB.GetItemPrefab` just returns `null` and resolution
-falls through to the next tier (category PNG / Icon3), so nothing crashes or
-breaks. If a specific creature/resource isn't showing the icon you'd expect,
-that mapping is the first place to check and correct.
+Every name in these tables was verified against Jotunn's generated
+[sprite list](https://valheim-modding.github.io/Jotunn/data/gui/sprite-list.html)
+(itself generated directly from live game data), not guessed from a naming
+convention - guessing is what previously produced wrong icons silently (e.g.
+`"Trophy" + Capitalize("bear")` guesses `TrophyBear`, which doesn't exist -
+the real sprite is `TrophyBjorn`). A wrong or missing entry is still harmless:
+`GUIManager.GetSprite` just returns `null` and resolution falls through to the
+next tier (category PNG / built-in fallback). If a specific creature/resource
+isn't showing the icon you'd expect, this table is the first place to check
+and correct - and the sprite list linked above is the source of truth, not
+memory or convention.
 
-## Why this doesn't depend on another pin mod
+## Dependency on Jotunn
 
-`RadarPlugin` declares `KGvalheim.MoreMapPins` and `Arielle.MoreMapPins` as
-soft BepInEx dependencies (see `AGENTS.md` Playbook 3), but nothing in this
-codebase actually calls into either mod's API. A `[BepInDependency(...,
-SoftDependency)]` attribute only affects BepInEx's plugin load order and
-prevents a hard crash if the named mod is missing - it does **not** give
-access to that mod's types, data, or icons. Actually consuming another mod's
-icons would require an assembly reference to its DLL and code written against
-its specific API/schema.
+ValheimRadar has a **hard** dependency on
+[Jotunn, the Valheim Library](https://valheim-modding.github.io/Jotunn/)
+(`[BepInDependency(Jotunn.Main.ModGuid)]` in `RadarPlugin.cs` - install it via
+Thunderstore/r2modman like any other plugin, or the game refuses to load
+ValheimRadar). Jotunn is the standard developer-facing modding library for
+Valheim and ships with the full game icon atlas already extracted and
+addressable by name:
 
-ValheimRadar doesn't need that: `CustomPinLoader` registers icons directly
-into Valheim's own `Minimap.m_icons` list via Unity's `Sprite`/`Texture2D`
-APIs, and `VanillaIconResolver` pulls existing icons straight from the game's
-`ObjectDB`. No external pin-icon mod is required for any of this to work.
+- `Pinning/IconLoader.cs` uses `Jotunn.Utils.AssetUtils.LoadTexture` to turn a
+  user-supplied PNG into a `Sprite` (tiers 1-2 above).
+- `Pinning/VanillaIconResolver.cs` uses `Jotunn.Managers.GUIManager.GetSprite`
+  to pull an existing vanilla icon out of that atlas by exact name (tier 3).
+
+Both return a plain `Sprite` that's set directly on `Minimap.PinData.m_icon` -
+no index bookkeeping into a shared icon list, so no icon-mapping drift across
+sessions or between mods.

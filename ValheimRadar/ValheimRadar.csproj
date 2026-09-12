@@ -16,6 +16,16 @@
     <ValheimInstallDir Condition="'$(ValheimInstallDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimInstallDir>
   </PropertyGroup>
 
+  <!--
+    ValheimRadar has a hard dependency on Jotunn (Jotunn.Main.ModGuid, see RadarPlugin.cs) for
+    minimap icon sprites - install it via Thunderstore/r2modman like any other plugin. Override
+    JotunnDllPath with -p:JotunnDllPath="..." if your mod manager installs it under a different
+    plugin folder name.
+  -->
+  <PropertyGroup>
+    <JotunnDllPath Condition="'$(JotunnDllPath)' == ''">$(ValheimInstallDir)\BepInEx\plugins\Jotunn\Jotunn.dll</JotunnDllPath>
+  </PropertyGroup>
+
   <ItemGroup>
     <Reference Include="0Harmony">
       <HintPath>$(ValheimInstallDir)\BepInEx\core\0Harmony.dll</HintPath>
@@ -28,6 +38,9 @@
     </Reference>
     <Reference Include="BepInEx">
       <HintPath>$(ValheimInstallDir)\BepInEx\core\BepInEx.dll</HintPath>
+    </Reference>
+    <Reference Include="Jotunn">
+      <HintPath>$(JotunnDllPath)</HintPath>
     </Reference>
     <Reference Include="Splatform">
       <HintPath>$(ValheimInstallDir)\valheim_Data\Managed\Splatform.dll</HintPath>
@@ -53,6 +66,10 @@
     <!-- Only kill/relaunch the game for local Debug builds, never for Release/CI packaging -->
     <AutoLaunchValheim Condition="'$(AutoLaunchValheim)' == ''">$(Configuration.Contains('Debug'))</AutoLaunchValheim>
   </PropertyGroup>
+
+  <Target Name="CheckJotunnReference" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(JotunnDllPath)')" Text="Jotunn.dll not found at '$(JotunnDllPath)'. Install Jotunn (Jotunn, the Valheim Library) via Thunderstore/r2modman, or pass -p:JotunnDllPath=&quot;...&quot; to override." />
+  </Target>
 
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
     <Error Condition="!Exists('$(ValheimInstallDir)')" Text="ValheimInstallDir '$(ValheimInstallDir)' does not exist. Pass -p:ValheimInstallDir=&quot;...&quot; to override." />
