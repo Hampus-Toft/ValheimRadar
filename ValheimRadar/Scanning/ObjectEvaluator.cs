@@ -158,9 +158,16 @@ namespace ValheimRadar
 
             // RESOURCES & STRUCTURES (berries through ruins/locations) - these are stationary, so
             // their pins persist on the minimap even after the player leaves scan range.
+            //
+            // Matched (and recorded into PinManager's raw point store) regardless of whether the
+            // category's own toggle is currently on - only IsCategoryEnabled (checked later, at pin
+            // render time) decides whether a match actually gets a visible pin. This way a category
+            // that's been off since before an area was ever scanned still gets its raw points
+            // recorded while the player walks through, so flipping the toggle on later immediately
+            // populates the map from ground already covered instead of requiring a re-scan.
             foreach (var rule in ResourceRules)
             {
-                if (rule.Enabled() && rule.Matches(go, nameLower))
+                if (rule.Matches(go, nameLower))
                 {
                     icon = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng, rule.VanillaIcon);
                     isPersistent = true;

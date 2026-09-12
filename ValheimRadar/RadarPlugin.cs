@@ -22,6 +22,8 @@ namespace ValheimRadar
         private bool wasActive = false;
         private string currentWorldName;
 
+        private static float ClusterDistance => RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
+
         private void Awake()
         {
             RadarConfig.Initialize(Config);
@@ -66,10 +68,14 @@ namespace ValheimRadar
             if (!wasActive)
             {
                 // Freshly connected/reloaded - reload this world's previously discovered
-                // resource/structure pins so the map doesn't start blank after a relog.
+                // resource/structure points and draw them immediately (rather than waiting for the
+                // first scan tick) so the map doesn't start blank after a relog. Clustering runs
+                // through the exact same ClusterItems + SyncClusterPins path a live scan uses, so a
+                // reloaded pin is never out of step with what the next real scan would produce.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
-                float loadClusterDist = RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
-                PinManager.LoadWorldPins(currentWorldName, Minimap.instance, loadClusterDist);
+                PinManager.LoadWorldPins(currentWorldName);
+                List<ItemCluster> loadedClusters = ClusteringEngine.ClusterItems(PinManager.GetAllRawPersistentPoints(), ClusterDistance);
+                PinManager.SyncClusterPins(Minimap.instance, loadedClusters);
                 wasActive = true;
             }
 
@@ -91,6 +97,7 @@ namespace ValheimRadar
         {
             Vector3 playerPos = Player.m_localPlayer.transform.position;
             List<TrackedItem> detectedItems = new List<TrackedItem>();
+            List<TrackedItem> transientItems = new List<TrackedItem>();
             HashSet<ZDOID> processedZdoids = new HashSet<ZDOID>();
 
             Collider[] hitColliders = Physics.OverlapSphere(playerPos, RadarConfig.ScanRadius.Value);
@@ -111,7 +118,7 @@ namespace ValheimRadar
                 if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Sprite icon, out bool isPersistent, out string categoryKey))
                 {
                     processedZdoids.Add(zdoid);
-                    detectedItems.Add(new TrackedItem
+                    TrackedItem item = new TrackedItem
                     {
                         Zdoid = zdoid,
                         Position = netView.transform.position,
@@ -120,12 +127,23 @@ namespace ValheimRadar
                         Icon = icon,
                         IsPersistent = isPersistent,
                         CategoryKey = categoryKey
-                    });
+                    };
+
+                    detectedItems.Add(item);
+                    if (!isPersistent) transientItems.Add(item);
                 }
             }
 
-            float clusterDist = RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
-            List<ItemCluster> clusters = ClusteringEngine.ClusterItems(detectedItems, clusterDist);
+            // Persistent (resource/structure) points merge into the durable raw store here, then get
+            // clustered below from that FULL history - not just what's in range this tick - so a
+            // ClusterDistance change or a newly-discovered nearby point reclusters the whole known
+            // area consistently instead of leaving a stale, differently-counted duplicate pin behind.
+            PinManager.RecordRawPoints(detectedItems);
+
+            List<TrackedItem> clusterInput = PinManager.GetAllRawPersistentPoints();
+            clusterInput.AddRange(transientItems);
+
+            List<ItemCluster> clusters = ClusteringEngine.ClusterItems(clusterInput, ClusterDistance);
 
             PinManager.SyncClusterPins(minimap, clusters);
         }

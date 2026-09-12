@@ -22,7 +22,18 @@ namespace ValheimRadar
         }
 
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
-        private static bool isDirty;
+
+        // Every persistent (resource/structure) point ever discovered this session, keyed by its
+        // stable ZDOID. This - not activeClusterPins - is the source of truth clusters are (re)built
+        // from every tick (see RecordRawPoints/GetAllRawPersistentPoints, called from RadarPlugin).
+        // Storing raw points instead of a pre-aggregated cluster means a ClusterDistance change, or a
+        // newly-discovered point next to an old one, reclusters cleanly from scratch every time
+        // instead of leaving the old aggregate behind as an orphaned, differently-counted duplicate
+        // pin. Points are recorded regardless of whether their category is currently enabled (see
+        // ObjectEvaluator) so re-enabling a category later immediately repopulates already-scanned
+        // ground instead of requiring the player to walk it again.
+        private static readonly Dictionary<string, TrackedItem> rawPersistentPoints = new Dictionary<string, TrackedItem>();
+        private static bool rawPointsDirty;
 
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar");
         private static string PinDataFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar", "PinData");
@@ -40,8 +51,35 @@ namespace ValheimRadar
             }
 
             activeClusterPins.Clear();
-            isDirty = false;
+            rawPersistentPoints.Clear();
+            rawPointsDirty = false;
         }
+
+        // Merges newly-scanned persistent points into the durable raw store, keyed by ZDOID so the
+        // same stationary world object is never recorded twice. Transient (creature) items are
+        // ignored here - see the class comment on rawPersistentPoints.
+        public static void RecordRawPoints(List<TrackedItem> items)
+        {
+            foreach (var item in items)
+            {
+                if (!item.IsPersistent) continue;
+
+                string key = RawPointKey(item.Zdoid);
+                if (rawPersistentPoints.ContainsKey(key)) continue;
+
+                rawPersistentPoints[key] = item;
+                rawPointsDirty = true;
+            }
+        }
+
+        // Full history of discovered persistent points, for RadarPlugin to combine with this tick's
+        // transient (creature) items before clustering - see rawPersistentPoints.
+        public static List<TrackedItem> GetAllRawPersistentPoints()
+        {
+            return new List<TrackedItem>(rawPersistentPoints.Values);
+        }
+
+        private static string RawPointKey(ZDOID zdoid) => $"{zdoid.UserID}:{zdoid.ID}";
 
         // Re-derives which categories should currently be visible and adds/removes minimap pins
         // accordingly. Cached cluster positions are never discarded here - disabling a category only
@@ -84,16 +122,27 @@ namespace ValheimRadar
                 UpdateOrCreatePin(minimap, key, centerPos, label, cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
             }
 
-            // Persistent (resource/structure) pins stay on the map after their cluster leaves scan
-            // range, since they're stationary - only transient (creature) pins get cleaned up here.
-            // A disabled-category entry is left alone even if absent from this scan (it's filtered out
-            // by ObjectEvaluator at the source regardless of whether it's still nearby) so its cached
-            // position survives being toggled off, instead of being evicted as "out of range".
             List<string> toRemove = new List<string>();
             foreach (var kvp in activeClusterPins)
             {
-                if (!currentScanKeys.Contains(kvp.Key) && !kvp.Value.IsPersistent && ObjectEvaluator.IsCategoryEnabled(kvp.Value.CategoryKey))
+                if (currentScanKeys.Contains(kvp.Key)) continue;
+
+                if (kvp.Value.IsPersistent)
                 {
+                    // Persistent clusters are rebuilt every tick from the FULL raw point history
+                    // (see rawPersistentPoints), not just what's in range right now, so a persistent
+                    // key going missing can only mean reclustering produced a different key for the
+                    // same underlying points (e.g. ClusterDistance changed, or a new nearby discovery
+                    // merged two clusters) - safe, and necessary, to evict so it doesn't linger as an
+                    // orphaned duplicate alongside the pin that replaced it.
+                    if (kvp.Value.Pin != null) minimap.RemovePin(kvp.Value.Pin);
+                    toRemove.Add(kvp.Key);
+                }
+                else if (ObjectEvaluator.IsCategoryEnabled(kvp.Value.CategoryKey))
+                {
+                    // Transient (creature) cluster genuinely left scan range - clean it up. A
+                    // disabled creature category is left alone even if absent from this scan, so its
+                    // cached position survives being toggled off instead of being evicted outright.
                     if (kvp.Value.Pin != null) minimap.RemovePin(kvp.Value.Pin);
                     toRemove.Add(kvp.Key);
                 }
@@ -157,7 +206,6 @@ namespace ValheimRadar
                     existing.Pin.m_icon = icon;
                 }
 
-                if (isPersistent && !existing.IsPersistent) isDirty = true;
                 existing.IsPersistent = isPersistent;
 
                 if (categoryEnabled && existing.Pin == null)
@@ -191,46 +239,40 @@ namespace ValheimRadar
                     RawName = rawName,
                     Icon = icon
                 });
-
-                if (isPersistent) isDirty = true;
             }
         }
 
-        // Only stationary resource/structure clusters are written to disk - creature positions are
+        // Only stationary resource/structure points are written to disk - creature positions are
         // transient by nature (they move or die) and would just go stale, so they're re-discovered by
         // scanning each session instead of being persisted.
         //
-        // Serialized as one pipe-delimited line per cluster (Unity's JsonUtility needs an assembly
-        // this project doesn't reference, and the data is simple enough not to warrant adding one).
-        //
-        // The cluster key and display label are deliberately NOT persisted - both are re-derived from
-        // (position, DisplayName) via ItemCluster on load, the same way a live scan computes them, so
-        // a reloaded pin lines up with whatever a fresh scan produces instead of drifting into a
-        // separate, overlapping duplicate.
+        // Raw per-object points are saved here, not clusters - see rawPersistentPoints. Serialized as
+        // one pipe-delimited line per point (Unity's JsonUtility needs an assembly this project
+        // doesn't reference, and the data is simple enough not to warrant adding one). The ZDOID is
+        // saved so a reload can dedupe against points re-discovered by a later scan of the same spot.
         public static void SaveWorldPins(string worldName)
         {
-            if (!isDirty || string.IsNullOrEmpty(worldName)) return;
+            if (!rawPointsDirty || string.IsNullOrEmpty(worldName)) return;
 
             List<string> lines = new List<string>();
-            foreach (var kvp in activeClusterPins)
+            foreach (var item in rawPersistentPoints.Values)
             {
-                if (!kvp.Value.IsPersistent) continue;
-
-                PinEntry e = kvp.Value;
                 lines.Add(string.Join("|",
-                    e.Position.x.ToString(CultureInfo.InvariantCulture),
-                    e.Position.y.ToString(CultureInfo.InvariantCulture),
-                    e.Position.z.ToString(CultureInfo.InvariantCulture),
-                    Escape(e.DisplayName),
-                    Escape(e.RawName),
-                    Escape(e.CategoryKey)));
+                    item.Zdoid.UserID.ToString(CultureInfo.InvariantCulture),
+                    item.Zdoid.ID.ToString(CultureInfo.InvariantCulture),
+                    item.Position.x.ToString(CultureInfo.InvariantCulture),
+                    item.Position.y.ToString(CultureInfo.InvariantCulture),
+                    item.Position.z.ToString(CultureInfo.InvariantCulture),
+                    Escape(item.DisplayName),
+                    Escape(item.RawName),
+                    Escape(item.CategoryKey)));
             }
 
             try
             {
                 Directory.CreateDirectory(PinDataFolder);
                 File.WriteAllLines(GetSaveFilePath(worldName), lines);
-                isDirty = false;
+                rawPointsDirty = false;
             }
             catch (Exception ex)
             {
@@ -238,19 +280,18 @@ namespace ValheimRadar
             }
         }
 
-        // Restores previously discovered resource/structure pins for this world so the map doesn't
-        // start blank after a relog. Called once right after connecting, before the first scan tick.
-        //
-        // clusterDistance must match the value the live scan clusters with (RadarConfig.ClusterDistance)
-        // so a reloaded pin's re-derived key lands in the same spatial bucket a fresh scan of the same
-        // spot would compute - otherwise the loaded pin and the next scan's pin for the same resource
-        // patch would carry different keys and stack as two overlapping pins instead of one being updated.
-        public static void LoadWorldPins(string worldName, Minimap minimap, float clusterDistance)
+        // Restores previously discovered resource/structure points for this world into the raw store
+        // (see rawPersistentPoints), so the map doesn't start blank after a relog. Called once right
+        // after connecting, before the first scan tick. Does not touch the minimap itself - the caller
+        // is expected to cluster GetAllRawPersistentPoints() and run it through SyncClusterPins so
+        // loaded points are drawn through the exact same path a live scan uses, instead of a separate
+        // one that could drift out of sync with it (e.g. after a ClusterDistance change).
+        public static void LoadWorldPins(string worldName)
         {
-            activeClusterPins.Clear();
-            isDirty = false;
+            rawPersistentPoints.Clear();
+            rawPointsDirty = false;
 
-            if (string.IsNullOrEmpty(worldName) || minimap == null) return;
+            if (string.IsNullOrEmpty(worldName)) return;
 
             string path = GetSaveFilePath(worldName);
             if (!File.Exists(path)) return;
@@ -262,28 +303,23 @@ namespace ValheimRadar
                     if (string.IsNullOrEmpty(line)) continue;
 
                     string[] parts = line.Split('|');
-                    if (parts.Length != 6) continue;
+                    if (parts.Length != 8) continue;
 
-                    if (!float.TryParse(parts[0], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) continue;
-                    if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)) continue;
-                    if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
+                    if (!long.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out long userId)) continue;
+                    if (!uint.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out uint id)) continue;
+                    if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) continue;
+                    if (!float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)) continue;
+                    if (!float.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
 
-                    string displayName = Unescape(parts[3]);
-                    string rawName = Unescape(parts[4]);
-                    string categoryKey = Unescape(parts[5]);
+                    string displayName = Unescape(parts[5]);
+                    string rawName = Unescape(parts[6]);
+                    string categoryKey = Unescape(parts[7]);
 
                     if (string.IsNullOrEmpty(displayName)) continue;
 
-                    Vector3 pos = new Vector3(x, y, z);
-
-                    // Re-derive the key and label the same way a live scan would, from a single-item
-                    // cluster at this position - see the comment above.
-                    ItemCluster syntheticCluster = new ItemCluster { DisplayName = displayName, MaxDistance = clusterDistance };
-                    syntheticCluster.Items.Add(new TrackedItem { Position = pos, DisplayName = displayName });
-                    string key = syntheticCluster.GetClusterKey();
-                    string label = syntheticCluster.GetLabel();
-
-                    if (string.IsNullOrEmpty(key) || activeClusterPins.ContainsKey(key)) continue;
+                    ZDOID zdoid = new ZDOID(userId, id);
+                    string key = RawPointKey(zdoid);
+                    if (rawPersistentPoints.ContainsKey(key)) continue;
 
                     string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
                     string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
@@ -291,24 +327,15 @@ namespace ValheimRadar
                         ? null
                         : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
 
-                    bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
-                    Minimap.PinData pin = null;
-                    if (categoryEnabled)
+                    rawPersistentPoints[key] = new TrackedItem
                     {
-                        pin = minimap.AddPin(pos, Minimap.PinType.Icon3, label, save: false, isChecked: false);
-                        pin.m_icon = icon;
-                    }
-
-                    activeClusterPins[key] = new PinEntry
-                    {
-                        Pin = pin,
-                        IsPersistent = true,
-                        CategoryKey = categoryKey,
-                        Position = pos,
-                        Label = label,
+                        Zdoid = zdoid,
+                        Position = new Vector3(x, y, z),
                         DisplayName = displayName,
                         RawName = rawName,
-                        Icon = icon
+                        Icon = icon,
+                        IsPersistent = true,
+                        CategoryKey = categoryKey
                     };
                 }
             }
