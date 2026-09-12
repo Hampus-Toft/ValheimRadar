@@ -88,6 +88,14 @@ isn't showing the icon you'd expect, this table is the first place to check
 and correct - and the sprite list linked above is the source of truth, not
 memory or convention.
 
+`VanillaIconResolver.TryResolveIcon` also guards the `GetSprite` call itself:
+on some client/mod-list combinations, Jotunn's own lazy `AssetManager` init
+(triggered by the first `GetSprite` call) can throw internally (a Harmony
+transpiler failure inside Jotunn, unrelated to this codebase). That's caught
+and latched so vanilla icon lookups are disabled for the rest of the session
+instead of taking the whole scan loop down with them - pins still get placed,
+just with category-default/user-PNG icons instead of vanilla ones.
+
 ## Dependency on Jotunn
 
 ValheimRadar has a **hard** dependency on
