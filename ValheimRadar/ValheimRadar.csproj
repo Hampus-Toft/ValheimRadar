@@ -95,4 +95,24 @@
           ContinueOnError="true" />
   </Target>
 
+  <!--
+    Builds a Thunderstore-importable zip (manifest.json + icon.png + README.md + the plugin DLL)
+    under bin/Thunderstore. manifest.json's version_number is generated from RadarPlugin's
+    PluginVersion const at pack time (see Thunderstore/Pack.ps1) rather than duplicated by hand,
+    so the Thunderstore/r2modman listing can never silently drift from the version BepInEx loads.
+    Usage: dotnet build -c Release -t:ThunderstorePack
+    Override the zip's team/namespace prefix with -p:ThunderstoreNamespace="YourTeamName".
+    (Named ThunderstorePack, not "Pack" - that name is already claimed by the SDK's built-in
+    NuGet packaging target, which would otherwise silently win over ours.)
+  -->
+  <PropertyGroup>
+    <ThunderstoreNamespace Condition="'$(ThunderstoreNamespace)' == ''">HampusToft</ThunderstoreNamespace>
+    <ThunderstoreOutDir>$(MSBuildProjectDirectory)\bin\Thunderstore</ThunderstoreOutDir>
+  </PropertyGroup>
+
+  <Target Name="ThunderstorePack" DependsOnTargets="Build">
+    <MakeDir Directories="$(ThunderstoreOutDir)" Condition="!Exists('$(ThunderstoreOutDir)')" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\Thunderstore\Pack.ps1&quot; -ProjectDir &quot;$(MSBuildProjectDirectory)&quot; -TargetPath &quot;$(TargetPath)&quot; -OutDir &quot;$(ThunderstoreOutDir)&quot; -Namespace &quot;$(ThunderstoreNamespace)&quot;" />
+  </Target>
+
 </Project>
