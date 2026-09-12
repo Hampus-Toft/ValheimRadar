@@ -36,6 +36,7 @@ namespace ValheimRadar
             Config.SettingChanged -= OnConfigurationChanged;
             PinManager.SaveWorldPins(currentWorldName);
             PinManager.ClearAllPins();
+            BatchScanner.Reset();
         }
 
         private void OnConfigurationChanged(object sender, EventArgs e)
@@ -45,6 +46,10 @@ namespace ValheimRadar
             // category instantly redraws its pins at their last known location instead of waiting
             // for the player to walk back into scan range.
             PinManager.RefreshCategoryVisibility(Minimap.instance);
+
+            // Any config change (ScanRadius/ScanBatchCount especially) can invalidate the current
+            // batch rotation, so drop it and let ScanBatch rebuild cleanly from the next tick.
+            BatchScanner.Reset();
         }
 
         private void Update()
@@ -58,6 +63,7 @@ namespace ValheimRadar
                 {
                     PinManager.SaveWorldPins(currentWorldName);
                     PinManager.ClearAllPins();
+                    BatchScanner.Reset();
                     wasActive = false;
                     currentWorldName = null;
                     saveTimer = 0f;
@@ -96,42 +102,17 @@ namespace ValheimRadar
         private void ScanAndPinObjects(Minimap minimap)
         {
             Vector3 playerPos = Player.m_localPlayer.transform.position;
-            List<TrackedItem> detectedItems = new List<TrackedItem>();
+
+            // Only a rotating slice of the scan area's cells is physically re-queried this tick - see
+            // BatchScanner. detectedItems is the combined (cached + freshly-scanned) set for every
+            // cell currently in range, so it always represents the full radius, just not all of it
+            // freshly re-scanned on every single tick.
+            List<TrackedItem> detectedItems = BatchScanner.ScanBatch(playerPos, RadarConfig.ScanRadius.Value, RadarConfig.ScanBatchCount.Value);
+
             List<TrackedItem> transientItems = new List<TrackedItem>();
-            HashSet<ZDOID> processedZdoids = new HashSet<ZDOID>();
-
-            Collider[] hitColliders = Physics.OverlapSphere(playerPos, RadarConfig.ScanRadius.Value);
-            foreach (var hit in hitColliders)
+            foreach (var item in detectedItems)
             {
-                if (hit == null) continue;
-
-                GameObject obj = hit.gameObject;
-                ZNetView netView = obj.GetComponentInParent<ZNetView>();
-
-                if (netView == null || !netView.IsValid() || netView.GetZDO() == null) continue;
-
-                ZDOID zdoid = netView.GetZDO().m_uid;
-                if (processedZdoids.Contains(zdoid)) continue;
-
-                string rawName = netView.gameObject.name.Replace("(Clone)", "").Trim().ToLower();
-
-                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Sprite icon, out bool isPersistent, out string categoryKey))
-                {
-                    processedZdoids.Add(zdoid);
-                    TrackedItem item = new TrackedItem
-                    {
-                        Zdoid = zdoid,
-                        Position = netView.transform.position,
-                        RawName = rawName,
-                        DisplayName = displayName,
-                        Icon = icon,
-                        IsPersistent = isPersistent,
-                        CategoryKey = categoryKey
-                    };
-
-                    detectedItems.Add(item);
-                    if (!isPersistent) transientItems.Add(item);
-                }
+                if (!item.IsPersistent) transientItems.Add(item);
             }
 
             // Persistent (resource/structure) points merge into the durable raw store here, then get
