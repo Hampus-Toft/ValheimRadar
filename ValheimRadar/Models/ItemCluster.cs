@@ -8,7 +8,7 @@ namespace ValheimRadar
     public class ItemCluster
     {
         public string DisplayName;
-        public Minimap.PinType PinType;
+        public Sprite Icon;
         public bool IsPersistent;
         public string CategoryKey;
         public string RawName;

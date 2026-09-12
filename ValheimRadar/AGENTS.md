@@ -39,7 +39,12 @@ This document defines operating guidelines, safety boundaries, and workflows for
 ### Playbook 3: Refactoring / Adding Extensions
 
 1. Check for `ZNetView` validity on all target objects.
-2. Ensure soft dependencies (`KGvalheim.MoreMapPins`, `Arielle.MoreMapPins`) are handled without introducing hard assembly crash dependencies.
+2. ValheimRadar has a **hard** dependency on Jotunn (`[BepInDependency(Jotunn.Main.ModGuid)]` in
+   `RadarPlugin.cs`) for minimap icon sprites - `Pinning/IconLoader.cs` uses
+   `Jotunn.Utils.AssetUtils` to load user-supplied PNGs, and `Pinning/VanillaIconResolver.cs` uses
+   `Jotunn.Managers.GUIManager` to pull verified built-in icons straight from Valheim's own icon
+   atlas. Don't reintroduce a standalone PNG/sprite loader or a bespoke `Minimap.m_icons`
+   registration path - route new icon sources through these two files.
 
 ---
 

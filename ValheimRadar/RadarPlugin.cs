@@ -6,13 +6,12 @@ using UnityEngine;
 namespace ValheimRadar
 {
     [BepInPlugin(PluginGUID, PluginName, PluginVersion)]
-    [BepInDependency("KGvalheim.MoreMapPins", BepInDependency.DependencyFlags.SoftDependency)]
-    [BepInDependency("Arielle.MoreMapPins", BepInDependency.DependencyFlags.SoftDependency)]
+    [BepInDependency(Jotunn.Main.ModGuid)]
     public class RadarPlugin : BaseUnityPlugin
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.4.0";
+        public const string PluginVersion = "1.5.0";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
@@ -108,7 +107,7 @@ namespace ValheimRadar
 
                 string rawName = netView.gameObject.name.Replace("(Clone)", "").Trim().ToLower();
 
-                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Minimap.PinType pinType, out bool isPersistent, out string categoryKey))
+                if (ObjectEvaluator.ShouldPinGameObject(netView.gameObject, rawName, out string displayName, out Sprite icon, out bool isPersistent, out string categoryKey))
                 {
                     processedZdoids.Add(zdoid);
                     detectedItems.Add(new TrackedItem
@@ -117,7 +116,7 @@ namespace ValheimRadar
                         Position = netView.transform.position,
                         RawName = rawName,
                         DisplayName = displayName,
-                        PinType = pinType,
+                        Icon = icon,
                         IsPersistent = isPersistent,
                         CategoryKey = categoryKey
                     });

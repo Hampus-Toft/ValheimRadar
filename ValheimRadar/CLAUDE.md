@@ -23,9 +23,10 @@ ValheimRadar/
 │   └── RadarConfig.cs       # BepInEx ConfigEntry bindings and master toggles
 ├── Models/
 │   ├── ItemCluster.cs       # Centroid, label, and cluster key computation
-│   └── TrackedItem.cs       # DTO representing a scanned entity (ZDOID, Position, PinType)
+│   └── TrackedItem.cs       # DTO representing a scanned entity (ZDOID, Position, Icon)
 ├── Pinning/
-│   ├── CustomPinLoader.cs   # PNG texture loading and custom pin registration
+│   ├── IconLoader.cs        # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
+│   ├── VanillaIconResolver.cs # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
 │   └── PinManager.cs        # Minimap pin sync, updates, removals, and icon routing
 ├── Scanning/
 │   ├── ClusteringEngine.cs  # Spatial distance-based point-clustering logic

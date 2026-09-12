@@ -8,7 +8,7 @@ namespace ValheimRadar
         public Vector3 Position;
         public string RawName;
         public string DisplayName;
-        public Minimap.PinType PinType;
+        public Sprite Icon;
         public bool IsPersistent;
         public string CategoryKey;
     }

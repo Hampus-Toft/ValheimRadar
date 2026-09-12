@@ -31,7 +31,7 @@ namespace ValheimRadar
                     ItemCluster newCluster = new ItemCluster
                     {
                         DisplayName = item.DisplayName,
-                        PinType = item.PinType,
+                        Icon = item.Icon,
                         IsPersistent = item.IsPersistent,
                         CategoryKey = item.CategoryKey,
                         RawName = item.RawName
