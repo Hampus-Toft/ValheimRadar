@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Jotunn.Managers;
 using UnityEngine;
@@ -14,6 +15,20 @@ namespace ValheimRadar
     /// </summary>
     public static class VanillaIconResolver
     {
+        // Jotunn's GUIManager lazily triggers its own AssetManager static initializer (a Harmony
+        // transpiler patch) the first time GetSprite() is called. On some client/server/mod-list
+        // combinations that internal Jotunn patch throws (observed: a HarmonyException wrapped in
+        // a TypeInitializationException from an IL compile error in Jotunn's own AssetBundleLoader
+        // patch - nothing in this codebase touches that code path). Once a type's static
+        // constructor throws, .NET permanently marks it broken and every later call rethrows the
+        // same exception, so a single bad GetSprite() call would otherwise kill vanilla icon
+        // lookups - and, since ObjectEvaluator.ShouldPinGameObject calls into this every scan tick
+        // for every detected object, the uncaught exception would propagate out of
+        // RadarPlugin.ScanAndPinObjects and abort pin placement entirely, every tick, for the rest
+        // of the session. Caught and latched here instead, so the mod falls back to default pin
+        // icons (still fully functional) rather than going dark.
+        private static bool jotunnIconLookupDisabled;
+
         private static readonly Dictionary<string, string> CreatureTrophySprites = new Dictionary<string, string>
         {
             ["boar"] = "TrophyBoar",
@@ -67,17 +82,32 @@ namespace ValheimRadar
         /// <param name="explicitSpriteName">Exact Jotunn/vanilla sprite atlas name to use directly (for resources), bypassing the creature/trophy lookup.</param>
         public static bool TryResolveIcon(string creatureKey, string explicitSpriteName, out Sprite sprite)
         {
+            sprite = null;
+            if (jotunnIconLookupDisabled)
+            {
+                return false;
+            }
+
             string spriteName = !string.IsNullOrEmpty(explicitSpriteName)
                 ? explicitSpriteName
                 : ResolveCreatureTrophySprite(creatureKey);
 
-            sprite = null;
             if (string.IsNullOrEmpty(spriteName) || GUIManager.Instance == null)
             {
                 return false;
             }
 
-            sprite = GUIManager.Instance.GetSprite(spriteName);
+            try
+            {
+                sprite = GUIManager.Instance.GetSprite(spriteName);
+            }
+            catch (Exception ex)
+            {
+                jotunnIconLookupDisabled = true;
+                Debug.LogWarning($"[ValheimRadar] Disabling vanilla icon lookups: Jotunn's GUIManager failed ({ex.GetType().Name}: {ex.Message}). Pins will use default/custom icons for the rest of this session.");
+                return false;
+            }
+
             return sprite != null;
         }
 
