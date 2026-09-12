@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.IO;
 using BepInEx;
 using UnityEngine;
@@ -23,22 +23,9 @@ namespace ValheimRadar
                 return fallback;
             }
 
-            if (Minimap.instance != m_registeredAgainst)
-            {
-                // Cached PinType values are indices into the previous Minimap.instance.m_icons list.
-                // A new instance (world reload/reconnect) invalidates them, so drop the stale cache.
-                Clear();
-                m_registeredAgainst = Minimap.instance;
-            }
-
-            if (RegisteredCustomPins.TryGetValue(filePath, out Minimap.PinType cachedType))
+            if (!TryGetCachedOrPrepareRegistration(filePath, fallback, out Minimap.PinType cachedType))
             {
                 return cachedType;
-            }
-
-            if (Minimap.instance == null || Minimap.instance.m_icons == null)
-            {
-                return fallback;
             }
 
             try
@@ -56,18 +43,7 @@ namespace ValheimRadar
                     );
                     sprite.name = Path.GetFileNameWithoutExtension(filePath);
 
-                    Minimap.SpriteData newSpriteData = new Minimap.SpriteData
-                    {
-                        m_name = (Minimap.PinType)Minimap.instance.m_icons.Count,
-                        m_icon = sprite
-                    };
-
-                    Minimap.instance.m_icons.Add(newSpriteData);
-
-                    Minimap.PinType newPinType = newSpriteData.m_name;
-                    RegisteredCustomPins[filePath] = newPinType;
-
-                    return newPinType;
+                    return RegisterSprite(filePath, sprite);
                 }
             }
             catch (System.Exception ex)
@@ -76,6 +52,70 @@ namespace ValheimRadar
             }
 
             return fallback;
+        }
+
+        /// <summary>
+        /// Registers an already-loaded Sprite (e.g. a vanilla item icon pulled from ObjectDB) as a
+        /// pin, sharing the same Minimap.instance cache-invalidation as PNG-file registration.
+        /// </summary>
+        public static Minimap.PinType RegisterSpriteAsPin(string cacheKey, Sprite sprite, Minimap.PinType fallback)
+        {
+            if (sprite == null)
+            {
+                return fallback;
+            }
+
+            if (!TryGetCachedOrPrepareRegistration(cacheKey, fallback, out Minimap.PinType cachedType))
+            {
+                return cachedType;
+            }
+
+            return RegisterSprite(cacheKey, sprite);
+        }
+
+        /// <summary>
+        /// Shared cache lookup/invalidation for both registration paths. Returns false (with the
+        /// resolved PinType in cachedType) when a cached or fallback value should be used instead of
+        /// registering; returns true when the caller still needs to create+register a new sprite.
+        /// </summary>
+        private static bool TryGetCachedOrPrepareRegistration(string cacheKey, Minimap.PinType fallback, out Minimap.PinType cachedType)
+        {
+            if (Minimap.instance != m_registeredAgainst)
+            {
+                // Cached PinType values are indices into the previous Minimap.instance.m_icons list.
+                // A new instance (world reload/reconnect) invalidates them, so drop the stale cache.
+                Clear();
+                m_registeredAgainst = Minimap.instance;
+            }
+
+            if (RegisteredCustomPins.TryGetValue(cacheKey, out cachedType))
+            {
+                return false;
+            }
+
+            if (Minimap.instance == null || Minimap.instance.m_icons == null)
+            {
+                cachedType = fallback;
+                return false;
+            }
+
+            return true;
+        }
+
+        private static Minimap.PinType RegisterSprite(string cacheKey, Sprite sprite)
+        {
+            Minimap.SpriteData newSpriteData = new Minimap.SpriteData
+            {
+                m_name = (Minimap.PinType)Minimap.instance.m_icons.Count,
+                m_icon = sprite
+            };
+
+            Minimap.instance.m_icons.Add(newSpriteData);
+
+            Minimap.PinType newPinType = newSpriteData.m_name;
+            RegisteredCustomPins[cacheKey] = newPinType;
+
+            return newPinType;
         }
     }
 }

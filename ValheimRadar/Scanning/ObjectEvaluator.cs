@@ -12,58 +12,65 @@ namespace ValheimRadar
             public readonly Func<bool> Enabled;
             public readonly Func<GameObject, string, bool> Matches;
             public readonly string IconPng;
+            public readonly string VanillaItemPrefab;
 
-            public ResourceRule(Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng)
+            public ResourceRule(Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng, string vanillaItemPrefab = null)
             {
                 Enabled = enabled;
                 Matches = matches;
                 IconPng = iconPng;
+                VanillaItemPrefab = vanillaItemPrefab;
             }
         }
 
         // Resource/structure categories (formerly 7 near-identical if/return blocks), evaluated in
         // this order. The first rule whose group+track toggle is enabled and whose predicate matches
         // wins - same semantics as the original blocks, just expressed as data instead of repeated code.
+        //
+        // VanillaItemPrefab is a best-effort vanilla item prefab name (not verified against a live
+        // game instance) used as a default icon when no custom PNG is supplied - see
+        // VanillaIconResolver. Left null where the mapping is too uncertain to guess safely; those
+        // types just keep using the category PNG / Icon3 fallback.
         private static readonly ResourceRule[] ResourceRules =
         {
             // BERRIES
-            new ResourceRule(() => RadarConfig.Group_Berries.Value && RadarConfig.TrackRaspberry.Value, (go, n) => n.Contains("raspberry"), "berry.png"),
-            new ResourceRule(() => RadarConfig.Group_Berries.Value && RadarConfig.TrackBlueberry.Value, (go, n) => n.Contains("blueberry"), "berry.png"),
-            new ResourceRule(() => RadarConfig.Group_Berries.Value && RadarConfig.TrackCloudberry.Value, (go, n) => n.Contains("cloudberry"), "berry.png"),
+            new ResourceRule(() => RadarConfig.Group_Berries.Value && RadarConfig.TrackRaspberry.Value, (go, n) => n.Contains("raspberry"), "berry.png", "Raspberry"),
+            new ResourceRule(() => RadarConfig.Group_Berries.Value && RadarConfig.TrackBlueberry.Value, (go, n) => n.Contains("blueberry"), "berry.png", "Blueberries"),
+            new ResourceRule(() => RadarConfig.Group_Berries.Value && RadarConfig.TrackCloudberry.Value, (go, n) => n.Contains("cloudberry"), "berry.png", "Cloudberry"),
 
             // MUSHROOMS
-            new ResourceRule(() => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackRedMushroom.Value, (go, n) => n.Equals("pickable_mushroom"), "mushroom.png"),
-            new ResourceRule(() => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackYellowMushroom.Value, (go, n) => n.Contains("yellow"), "mushroom.png"),
-            new ResourceRule(() => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackBlueMushroom.Value, (go, n) => n.Contains("blue"), "mushroom.png"),
+            new ResourceRule(() => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackRedMushroom.Value, (go, n) => n.Equals("pickable_mushroom"), "mushroom.png", "Mushroom"),
+            new ResourceRule(() => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackYellowMushroom.Value, (go, n) => n.Contains("yellow"), "mushroom.png", "MushroomYellow"),
+            new ResourceRule(() => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackBlueMushroom.Value, (go, n) => n.Contains("blue"), "mushroom.png", "MushroomBlue"),
 
             // FLOWERS & CROPS
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackDandelion.Value, (go, n) => n.Contains("dandelion"), "crop.png"),
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackThistle.Value, (go, n) => n.Contains("thistle"), "crop.png"),
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackCarrotSeed.Value, (go, n) => n.Contains("carrot"), "crop.png"),
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackTurnipSeed.Value, (go, n) => n.Contains("turnip"), "crop.png"),
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackOnionSeed.Value, (go, n) => n.Contains("onion"), "crop.png"),
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackBarley.Value, (go, n) => n.Contains("barley"), "crop.png"),
-            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackFlax.Value, (go, n) => n.Contains("flax"), "crop.png"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackDandelion.Value, (go, n) => n.Contains("dandelion"), "crop.png", "Dandelion"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackThistle.Value, (go, n) => n.Contains("thistle"), "crop.png", "Thistle"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackCarrotSeed.Value, (go, n) => n.Contains("carrot"), "crop.png", "CarrotSeeds"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackTurnipSeed.Value, (go, n) => n.Contains("turnip"), "crop.png", "TurnipSeeds"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackOnionSeed.Value, (go, n) => n.Contains("onion"), "crop.png", "OnionSeeds"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackBarley.Value, (go, n) => n.Contains("barley"), "crop.png", "Barley"),
+            new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackFlax.Value, (go, n) => n.Contains("flax"), "crop.png", "Flax"),
             new ResourceRule(() => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackMagecap.Value, (go, n) => n.Contains("magecap"), "crop.png"),
 
             // GROUND PICKABLES
-            new ResourceRule(() => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackFlint.Value, (go, n) => n.Contains("flint"), "ground.png"),
-            new ResourceRule(() => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackStone.Value, (go, n) => n.Contains("stone") && go.GetComponent<Pickable>() != null, "ground.png"),
-            new ResourceRule(() => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackWood.Value, (go, n) => (n.Contains("wood") || n.Contains("branch")) && go.GetComponent<Pickable>() != null, "ground.png"),
+            new ResourceRule(() => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackFlint.Value, (go, n) => n.Contains("flint"), "ground.png", "Flint"),
+            new ResourceRule(() => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackStone.Value, (go, n) => n.Contains("stone") && go.GetComponent<Pickable>() != null, "ground.png", "Stone"),
+            new ResourceRule(() => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackWood.Value, (go, n) => (n.Contains("wood") || n.Contains("branch")) && go.GetComponent<Pickable>() != null, "ground.png", "Wood"),
 
             // ORES
-            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => n.Contains("copper"), "ore.png"),
-            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => n.Contains("tin"), "ore.png"),
-            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => n.Contains("muddy") || n.Contains("iron"), "ore.png"),
-            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => n.Contains("silver"), "ore.png"),
+            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => n.Contains("copper"), "ore.png", "CopperOre"),
+            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => n.Contains("tin"), "ore.png", "TinOre"),
+            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => n.Contains("muddy") || n.Contains("iron"), "ore.png", "IronScrap"),
+            new ResourceRule(() => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => n.Contains("silver"), "ore.png", "SilverOre"),
 
-            // FUNCTIONAL STRUCTURES
+            // FUNCTIONAL STRUCTURES (no vanilla item icon exists for these - PNG override tiers only)
             new ResourceRule(() => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackChests.Value, (go, n) => go.GetComponent<Container>() != null, "chest.png"),
             new ResourceRule(() => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackPortals.Value, (go, n) => go.GetComponent<TeleportWorld>() != null || n.Contains("portal"), "portal.png"),
             new ResourceRule(() => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackDungeons.Value, (go, n) => n.Contains("dungeon") || n.Contains("crypt") || n.Contains("cave") || n.Contains("burial"), "dungeon.png"),
             new ResourceRule(() => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBeehives.Value, (go, n) => n.Contains("beehive"), "beehive.png"),
 
-            // DECORATIVE RUINS & LOCATIONS
+            // DECORATIVE RUINS & LOCATIONS (no vanilla item icon exists for these - PNG override tiers only)
             new ResourceRule(() => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackStoneRings.Value, (go, n) => n.Contains("stonering") || n.Contains("rockformation") || n.Contains("stone_ring"), "stone_ring.png"),
             new ResourceRule(() => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackAbandonedRuins.Value, (go, n) => n.Contains("ruin") || n.Contains("abandoned") || n.Contains("woodhouse") || n.Contains("village"), "ruin.png"),
             new ResourceRule(() => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackRunestones.Value, (go, n) => n.Contains("runestone"), "runestone.png"),
@@ -127,7 +134,7 @@ namespace ValheimRadar
             {
                 if (rule.Enabled() && rule.Matches(go, nameLower))
                 {
-                    pinType = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng);
+                    pinType = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng, rule.VanillaItemPrefab);
                     isPersistent = true;
                     return true;
                 }
