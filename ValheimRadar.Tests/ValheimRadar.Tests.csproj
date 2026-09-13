@@ -52,4 +52,11 @@
     </ProjectReference>
   </ItemGroup>
 
+  <!--
+    No-op so a solution-wide `dotnet build -c Release -t:ThunderstorePack` (e.g. from the repo
+    root, where ValheimRadar.slnx lists both projects) doesn't fail here with MSB4057 - the real
+    packing logic lives only in ValheimRadar.csproj's ThunderstorePack target.
+  -->
+  <Target Name="ThunderstorePack" />
+
 </Project>
