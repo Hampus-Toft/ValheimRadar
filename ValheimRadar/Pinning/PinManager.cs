@@ -77,6 +77,11 @@ namespace ValheimRadar
         // disconnect/world unload (after SaveWorldPins) so state never leaks across sessions/worlds.
         public static void ClearAllPins()
         {
+            if (activeClusterPins.Count > 0)
+            {
+                Debug.Log($"[ValheimRadar] pin-removed-all count={activeClusterPins.Count}");
+            }
+
             if (Minimap.instance != null)
             {
                 foreach (var entry in activeClusterPins.Values)
@@ -163,19 +168,22 @@ namespace ValheimRadar
         {
             if (minimap == null) return;
 
-            foreach (var entry in activeClusterPins.Values)
+            foreach (var kvp in activeClusterPins)
             {
+                PinEntry entry = kvp.Value;
                 bool shouldShow = ObjectEvaluator.IsCategoryEnabled(entry.CategoryKey);
 
                 if (shouldShow && entry.Pin == null)
                 {
                     entry.Pin = minimap.AddPin(entry.Position, Minimap.PinType.Icon3, entry.Label, save: false, isChecked: false);
                     entry.Pin.m_icon = entry.Icon;
+                    Debug.Log($"[ValheimRadar] pin-created key={kvp.Key} name={entry.DisplayName} pos={entry.Position.x:F1},{entry.Position.y:F1},{entry.Position.z:F1}");
                 }
                 else if (!shouldShow && entry.Pin != null)
                 {
                     minimap.RemovePin(entry.Pin);
                     entry.Pin = null;
+                    LogPinRemoved(kvp.Key, "category-disabled");
                 }
             }
         }
@@ -209,6 +217,7 @@ namespace ValheimRadar
                     // disabled creature category is left alone even if absent from this scan, so its
                     // cached position survives being toggled off instead of being evicted outright.
                     if (kvp.Value.Pin != null) minimap.RemovePin(kvp.Value.Pin);
+                    LogPinRemoved(kvp.Key, "out-of-range");
                     toRemove.Add(kvp.Key);
                 }
             }
@@ -243,6 +252,7 @@ namespace ValheimRadar
                     // duplicate pin alongside the one about to be (re)created under the new key.
                     if (stale.Pin != null) minimap.RemovePin(stale.Pin);
                     activeClusterPins.Remove(cluster.LastSyncedKey);
+                    LogPinRemoved(cluster.LastSyncedKey, "recluster");
                 }
 
                 UpdateOrCreatePin(minimap, newKey, cluster.GetCentroid(), cluster.GetLabel(), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
@@ -269,6 +279,7 @@ namespace ValheimRadar
                 {
                     if (activeClusterPins.TryGetValue(key, out PinEntry entry) && entry.Pin != null) minimap.RemovePin(entry.Pin);
                     activeClusterPins.Remove(key);
+                    LogPinRemoved(key, "recluster");
                 }
 
                 persistentFullResyncPending = false;
@@ -340,6 +351,8 @@ namespace ValheimRadar
 
             if (activeClusterPins.TryGetValue(clusterKey, out PinEntry existing))
             {
+                bool changed = existing.Position != pos || existing.DisplayName != displayName;
+
                 existing.Position = pos;
                 existing.Label = name;
                 existing.DisplayName = displayName;
@@ -352,6 +365,14 @@ namespace ValheimRadar
                     existing.Pin.m_pos = pos;
                     existing.Pin.m_name = name;
                     existing.Pin.m_icon = icon;
+
+                    // Only logged when something actually moved/renamed - UpdateOrCreatePin runs
+                    // every scan tick for every live cluster, so logging unconditionally here would
+                    // drown out the real events an integration test needs to assert on.
+                    if (changed)
+                    {
+                        Debug.Log($"[ValheimRadar] pin-updated key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                    }
                 }
 
                 existing.IsPersistent = isPersistent;
@@ -360,11 +381,13 @@ namespace ValheimRadar
                 {
                     existing.Pin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: false);
                     existing.Pin.m_icon = icon;
+                    Debug.Log($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
                 }
                 else if (!categoryEnabled && existing.Pin != null)
                 {
                     minimap.RemovePin(existing.Pin);
                     existing.Pin = null;
+                    LogPinRemoved(clusterKey, "category-disabled");
                 }
             }
             else
@@ -387,8 +410,19 @@ namespace ValheimRadar
                     RawName = rawName,
                     Icon = icon
                 });
+
+                if (newPin != null)
+                {
+                    Debug.Log($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                }
             }
         }
+
+        // Shared by every RemovePin call site so the integration test's log-based assertions can
+        // tell a real despawn (reason="out-of-range") apart from unrelated pin churn - a category
+        // toggle, a ClusterDistance-triggered recluster, etc. - happening during the same test run.
+        private static void LogPinRemoved(string clusterKey, string reason) =>
+            Debug.Log($"[ValheimRadar] pin-removed key={clusterKey} reason={reason}");
 
         // Only stationary resource/structure points are written to disk - creature positions are
         // transient by nature (they move or die) and would just go stale, so they're re-discovered by
@@ -450,6 +484,15 @@ namespace ValheimRadar
             // such duplicate encountered here is silently dropped rather than loaded, and marks the
             // store dirty so the next save rewrites the file without it - self-healing the save file
             // over time instead of carrying the old duplicates forward forever.
+            //
+            // Also covers points whose ZDO no longer exists at all (e.g. a boss arena's stone pillars,
+            // saved as persistent "AbandonedRuins"/"StoneRings" pins before BatchScanner's scan-volume
+            // fix and ObjectEvaluator's debris-name filter existed, then shattered and removed from the
+            // world on the boss's death). If ZDOMan hasn't fully synced yet this early after connecting
+            // (possible on a dedicated-server client, never on a hosted/singleplayer world, where
+            // ZDOMan is already fully authoritative at this point) a still-real distant point could be
+            // dropped by mistake - but nothing is lost: the next real scan near it just re-adds it, the
+            // same as any other not-yet-(re)scanned ground.
             bool droppedDuplicate = false;
 
             try
@@ -487,6 +530,12 @@ namespace ValheimRadar
                     };
 
                     if (rawPersistentPoints.ContainsKey(key) || IsDuplicatePosition(candidate))
+                    {
+                        droppedDuplicate = true;
+                        continue;
+                    }
+
+                    if (ZDOMan.instance == null || ZDOMan.instance.GetZDO(zdoid) == null)
                     {
                         droppedDuplicate = true;
                         continue;

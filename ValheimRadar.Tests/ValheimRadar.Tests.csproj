@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>disable</Nullable>
+  </PropertyGroup>
+
+  <!--
+    Same VALHEIM_INSTALL_DIR override as ValheimRadar.csproj - see the property comment there.
+  -->
+  <PropertyGroup>
+    <ValheimInstallDir Condition="'$(VALHEIM_INSTALL_DIR)' != ''">$(VALHEIM_INSTALL_DIR)</ValheimInstallDir>
+    <ValheimInstallDir Condition="'$(ValheimInstallDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Valheim</ValheimInstallDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!--
+    ProjectReference alone doesn't flow ValheimRadar.csproj's own raw HintPath assembly references
+    (Vector3 lives in UnityEngine.CoreModule.dll, ConfigFile/ConfigEntry in BepInEx.dll) through to
+    this project at compile time - those aren't NuGet packages, so MSBuild never forwards them
+    transitively. Reference the same two DLLs directly, via the same VALHEIM_INSTALL_DIR the main
+    project uses, so test code can construct Vector3/TrackedItem and drive RadarConfig/ConfigFile
+    directly.
+  -->
+  <ItemGroup>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(ValheimInstallDir)\valheim_Data\Managed\UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(ValheimInstallDir)\BepInEx\core\BepInEx.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      AdditionalProperties forces AutoLaunchValheim=false regardless of which configuration MSBuild
+      picks for this reference - ValheimRadar.csproj's PostBuild target defaults AutoLaunchValheim
+      to true for any Debug build, which kills and relaunches the live Steam client. That's the
+      intended interactive dev workflow, but never acceptable as a side effect of `dotnet test`.
+    -->
+    <ProjectReference Include="..\ValheimRadar\ValheimRadar.csproj">
+      <AdditionalProperties>AutoLaunchValheim=false</AdditionalProperties>
+    </ProjectReference>
+  </ItemGroup>
+
+</Project>

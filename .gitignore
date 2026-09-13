@@ -7,3 +7,5 @@
 /ValheimRadar/obj/Debug/net10.0
 /ValheimRadar/obj/Release
 /ValheimRadar/obj
+/ValheimRadar.Tests/bin
+/ValheimRadar.Tests/obj

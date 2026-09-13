@@ -84,12 +84,32 @@ namespace ValheimRadar
             new ResourceRule("TarPits", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackTarPits.Value, (go, n) => n.Contains("tarpit") || n.Contains("tar_pit"), "tarpit.png"),
         };
 
+        // Destruction-fragment/debris pieces (e.g. a boss arena's stone pillars shattering apart on
+        // death - see BatchScanner's scan-volume fix, which is what let a burst of these get recorded
+        // as persistent "AbandonedRuins"/"StoneRings" pins in the first place) are never legitimate
+        // resources or creatures in their own right. Rejected purely by name, before any other check,
+        // regardless of category - a curated whitelist of exact prefab names would be more precise,
+        // but Valheim's shatter system generates these dynamically, so there's no fixed list to match.
+        private static readonly string[] DebrisNameMarkers = { "_frac", "debris", "rubble", "fragment", "_piece", "_chip" };
+
+        // Dungeon/cave interiors (crypts, sunken crypts, dvergr forts, mountain caves, ...) are
+        // generated at a large, fixed vertical offset from the real terrain at their entrance's X/Z -
+        // "high in the sky" or "underground" relative to the actual ground - so their objects have no
+        // sensible position on the 2D minimap and just show up confusingly stacked on whatever is
+        // really at that spot on the surface. Generous enough that real terrain variance (cliffs,
+        // mountain peaks) directly above/below a point is never mistaken for a dungeon interior -
+        // genuine dungeon-generation offsets are far larger than that.
+        private const float DungeonHeightOffsetThreshold = 40f;
+
         public static bool ShouldPinGameObject(GameObject go, string nameLower, out string displayName, out Sprite icon, out bool isPersistent, out string categoryKey)
         {
             displayName = string.Empty;
             icon = null;
             isPersistent = false;
             categoryKey = null;
+
+            if (ContainsAny(nameLower, DebrisNameMarkers)) return false;
+            if (IsInsideDungeonInterior(go.transform.position)) return false;
 
             Character character = go.GetComponent<Character>();
 
@@ -246,7 +266,7 @@ namespace ValheimRadar
 
         // Ordered most-specific-key-first (see RadarConfig.CreatureDefinitions), so a variant like
         // "greydwarf_elite" is matched before the generic "greydwarf" entry.
-        private static RadarConfig.CreatureConfigEntry FindCreatureOverride(string nameLower, out string matchedKey)
+        internal static RadarConfig.CreatureConfigEntry FindCreatureOverride(string nameLower, out string matchedKey)
         {
             foreach (var def in RadarConfig.CreatureDefinitions)
             {
@@ -259,6 +279,24 @@ namespace ValheimRadar
 
             matchedKey = null;
             return null;
+        }
+
+        internal static bool ContainsAny(string value, string[] markers)
+        {
+            foreach (var marker in markers)
+            {
+                if (value.Contains(marker)) return true;
+            }
+
+            return false;
+        }
+
+        private static bool IsInsideDungeonInterior(Vector3 position)
+        {
+            if (ZoneSystem.instance == null) return false;
+            if (!ZoneSystem.instance.GetGroundHeight(position, out float groundHeight)) return false;
+
+            return Mathf.Abs(position.y - groundHeight) > DungeonHeightOffsetThreshold;
         }
 
         private static bool IsPassiveAnimal(Character character)
@@ -300,7 +338,7 @@ namespace ValheimRadar
             return clean.Replace("(Clone)", "").Trim();
         }
 
-        private static string FormatHumanFriendlyName(string rawName)
+        internal static string FormatHumanFriendlyName(string rawName)
         {
             if (string.IsNullOrEmpty(rawName)) return string.Empty;
 

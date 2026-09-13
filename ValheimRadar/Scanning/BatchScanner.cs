@@ -69,7 +69,7 @@ namespace ValheimRadar
                 CellKey key = rotation.First.Value;
                 rotation.RemoveFirst();
 
-                cellCache[key] = ScanCell(key, playerPos.y, scanRadius);
+                cellCache[key] = ScanCell(key, playerPos.y);
 
                 rotationNodes[key] = rotation.AddLast(key);
             }
@@ -155,13 +155,20 @@ namespace ValheimRadar
             }
         }
 
-        private static List<TrackedItem> ScanCell(CellKey key, float playerY, float scanRadius)
+        // Vertical half-extent of a scan cell's collision box, independent of ScanRadius. ScanRadius
+        // is a horizontal (XZ) distance, so reusing it for box height meant a 300m ScanRadius produced
+        // a 600m-tall query column per cell - capturing every collider from deep underground to high
+        // above the skybox, layer-unfiltered. A fixed vertical range comfortably covers Valheim's real
+        // terrain variance (caves through mountain peaks) around the player without that blowup.
+        private const float CellHeight = 150f;
+
+        private static List<TrackedItem> ScanCell(CellKey key, float playerY)
         {
             List<TrackedItem> items = new List<TrackedItem>();
             HashSet<ZDOID> processedZdoids = new HashSet<ZDOID>();
 
             Vector3 center = new Vector3((key.X + 0.5f) * CellSize, playerY, (key.Z + 0.5f) * CellSize);
-            Vector3 halfExtents = new Vector3(CellSize / 2f, scanRadius, CellSize / 2f);
+            Vector3 halfExtents = new Vector3(CellSize / 2f, CellHeight, CellSize / 2f);
 
             Collider[] hitColliders = Physics.OverlapBox(center, halfExtents);
             foreach (var hit in hitColliders)
