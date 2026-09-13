@@ -51,6 +51,49 @@ namespace ValheimRadar
             public ConfigEntry<int> MinStars;
         }
 
+        // World "Location" content (see ZoneSystem.LocationInstance/ZoneLocation, queried via
+        // Scanning/LocationScanner.cs) - dungeons, ruins, boss altars, runestones, the trader,
+        // shipwrecks, etc. Grouped coarsely by what kind of thing they are, mirroring the
+        // Group_X master-toggle pattern used elsewhere in this file.
+        public enum LocationGroup { BossAltar, Landmark, DungeonEntrance, Runestone, Ruin }
+
+        public sealed class LocationDefinition
+        {
+            // Stable id used for the Locations dictionary, the "location:{key}" categoryKey, and
+            // the on-disk save file. Not required to be a real prefab name.
+            public readonly string CanonicalKey;
+
+            // Exact, lowercased ZoneLocation.m_prefabName values that all count as this POI type -
+            // matched via LocationPrefabLookup below, mirroring AliasLookup's flat exact-match
+            // scheme for creatures.
+            public readonly string[] PrefabNames;
+
+            public readonly string DisplayName;
+            public readonly string Section;
+            public readonly LocationGroup Group;
+            public readonly string IconPng;
+            public readonly string VanillaIcon;
+            public readonly bool DefaultEnabled;
+
+            public LocationDefinition(string canonicalKey, string[] prefabNames, string displayName, string section,
+                LocationGroup group, string iconPng, string vanillaIcon = null, bool defaultEnabled = true)
+            {
+                CanonicalKey = canonicalKey;
+                PrefabNames = prefabNames;
+                DisplayName = displayName;
+                Section = section;
+                Group = group;
+                IconPng = iconPng;
+                VanillaIcon = vanillaIcon;
+                DefaultEnabled = defaultEnabled;
+            }
+        }
+
+        public sealed class LocationConfigEntry
+        {
+            public ConfigEntry<bool> Enabled;
+        }
+
         private const string SecMeadows = "4 - Creatures (Meadows)";
         private const string SecBlackForest = "5 - Creatures (Black Forest)";
         private const string SecSwamp = "6 - Creatures (Swamp)";
@@ -59,6 +102,12 @@ namespace ValheimRadar
         private const string SecMistlands = "9 - Creatures (Mistlands)";
         private const string SecBosses = "3b - Bosses & Notable Creatures";
         private const string SecFish = "9b - Creatures (Fish)";
+
+        private const string SecBossLocations = "18 - Locations (Boss Altars)";
+        private const string SecLandmarkLocations = "19 - Locations (Landmarks)";
+        private const string SecDungeonLocations = "20 - Locations (Dungeon Entrances)";
+        private const string SecRunestoneLocations = "21 - Locations (Runestones)";
+        private const string SecRuinLocations = "22 - Locations (Ruins & Structures)";
 
         public static readonly CreatureDefinition[] CreatureDefinitions =
         {
@@ -173,11 +222,140 @@ namespace ValheimRadar
 
         public static readonly Dictionary<string, CreatureConfigEntry> Creatures = new Dictionary<string, CreatureConfigEntry>();
 
+        // ~115 raw ZoneLocation.m_prefabName values from Valheim's own world-gen data, merged into
+        // ~53 toggleable POI types across 5 groups. Source: a datamined table of every relevant
+        // Location's prefab name, biome, and placement constraints - cross-checked field-for-field
+        // against the live ZoneSystem.ZoneLocation struct (m_prefabName, m_biome, m_prioritized,
+        // m_unique, etc.) via reflection against the installed game's assembly_valheim.dll, so these
+        // prefab names are exact, not guessed.
+        public static readonly LocationDefinition[] LocationDefinitions =
+        {
+            // BOSS ALTARS - reuse VanillaIconResolver's existing verified trophy sprites.
+            new LocationDefinition("boss_eikthyr", new[] { "eikthyrnir" }, "Eikthyr Altar", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophyEikthyr"),
+            new LocationDefinition("boss_elder", new[] { "gdking" }, "Elder Altar", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophyTheElder"),
+            new LocationDefinition("boss_bonemass", new[] { "bonemass" }, "Bonemass Altar", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophyBonemass"),
+            new LocationDefinition("boss_moder", new[] { "dragonqueen" }, "Moder Altar", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophyDragonQueen"),
+            new LocationDefinition("boss_yagluth", new[] { "goblinking" }, "Yagluth Altar", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophyGoblinKing"),
+            new LocationDefinition("boss_queen", new[] { "mistlands_dvergrbossentrance1" }, "Queen Entrance", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophySeekerQueen"),
+
+            // LANDMARKS
+            new LocationDefinition("landmark_starttemple", new[] { "starttemple" }, "Start Temple", SecLandmarkLocations, LocationGroup.Landmark, "landmark.png"),
+            new LocationDefinition("landmark_trader", new[] { "vendor_blackforest" }, "Black Forest Trader", SecLandmarkLocations, LocationGroup.Landmark, "landmark.png"),
+
+            // DUNGEON ENTRANCES
+            new LocationDefinition("dungeon_blackforestcrypt", new[] { "crypt2", "crypt3", "crypt4" }, "Black Forest Dungeon", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition("dungeon_sunkencrypt", new[] { "sunkencrypt4" }, "Sunken Crypt", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition("dungeon_trollcave", new[] { "trollcave02" }, "Troll Cave", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition("dungeon_mountaincave", new[] { "mountaincave02" }, "Mountain Cave", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition("dungeon_dvergrtown", new[] { "mistlands_dvergrtownentrance1", "mistlands_dvergrtownentrance2" }, "Dvergr Town", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+
+            // RUNESTONES - one entry per biome variant.
+            new LocationDefinition("runestone_greydwarfs", new[] { "runestone_greydwarfs" }, "Runestone (Greydwarfs)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_blackforest", new[] { "runestone_blackforest" }, "Runestone (Black Forest)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_meadows", new[] { "runestone_meadows" }, "Runestone (Meadows)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_boars", new[] { "runestone_boars" }, "Runestone (Boars)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_mistlands", new[] { "runestone_mistlands" }, "Runestone (Mistlands)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_mountains", new[] { "runestone_mountains" }, "Runestone (Mountains)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_drakelorestone", new[] { "drakelorestone" }, "Runestone (Drake Lorestone)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_draugr", new[] { "runestone_draugr" }, "Runestone (Draugr)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_swamps", new[] { "runestone_swamps" }, "Runestone (Swamps)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+            new LocationDefinition("runestone_plains", new[] { "runestone_plains" }, "Runestone (Plains)", SecRunestoneLocations, LocationGroup.Runestone, "runestone.png"),
+
+            // RUINS & STRUCTURES
+            new LocationDefinition("ruin_blackforestruins", new[] { "ruin1", "ruin2", "stonehouse3", "stonehouse4" }, "Black Forest Ruins", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_stonetower", new[] { "stonetowerruins03", "stonetowerruins07", "stonetowerruins08", "stonetowerruins09", "stonetowerruins10", "stonetowerruins04", "stonetowerruins05" }, "Stone Tower Ruins", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_greydwarfcamp", new[] { "greydwarf_camp1" }, "Greydwarf Camp", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_shipwreck", new[] { "shipwreck01", "shipwreck02", "shipwreck03", "shipwreck04" }, "Shipwreck", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_meadowsruinedhouse", new[] { "woodhouse1", "woodhouse2", "woodhouse3", "woodhouse4", "woodhouse5", "woodhouse6", "woodhouse7", "woodhouse8", "woodhouse9", "woodhouse10", "woodhouse11", "woodhouse12", "woodhouse13" }, "Meadows Ruined House", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_meadowsfarm", new[] { "woodfarm1" }, "Meadows Farm", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_meadowsvillage", new[] { "woodvillage1" }, "Meadows Village", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_shipburialmound", new[] { "shipsetting01" }, "Ship Burial Mound", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_stonecircle", new[] { "stonecircle" }, "Stone Circle", SecRuinLocations, LocationGroup.Ruin, "stone_ring.png"),
+            new LocationDefinition("ruin_dolmen", new[] { "dolmen01", "dolmen02", "dolmen03" }, "Dolmen", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mistlandsroadpost", new[] { "mistlands_roadpost1" }, "Mistlands Road Post", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mistlandsstatue", new[] { "mistlands_statuegroup1", "mistlands_statue1", "mistlands_statue2" }, "Mistlands Statue", SecRuinLocations, LocationGroup.Ruin, "ruin.png", defaultEnabled: false),
+            new LocationDefinition("ruin_mistlandsharbour", new[] { "mistlands_harbour1" }, "Mistlands Harbour", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_dvergrguardtower", new[] { "mistlands_guardtower1_new", "mistlands_guardtower1_ruined_new", "mistlands_guardtower1_ruined_new2", "mistlands_guardtower2_new", "mistlands_guardtower3_new", "mistlands_guardtower3_ruined_new" }, "Dvergr Guard Tower", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mistlandslighthouse", new[] { "mistlands_lighthouse1_new" }, "Mistlands Lighthouse", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_dvergrexcavation", new[] { "mistlands_excavation1", "mistlands_excavation2", "mistlands_excavation3" }, "Dvergr Excavation", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mistlandsviaduct", new[] { "mistlands_viaduct1", "mistlands_viaduct2" }, "Mistlands Viaduct", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mistlandsrockspire", new[] { "mistlands_rockspire1" }, "Mistlands Rock Spire", SecRuinLocations, LocationGroup.Ruin, "ruin.png", defaultEnabled: false),
+            new LocationDefinition("ruin_giantremains", new[] { "mistlands_giant1", "mistlands_giant2" }, "Giant Remains", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_giantswords", new[] { "mistlands_swords1", "mistlands_swords2", "mistlands_swords3" }, "Giant Swords", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_abandonedcabin", new[] { "abandonedlogcabin02", "abandonedlogcabin03", "abandonedlogcabin04" }, "Abandoned Cabin", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mountaingrave", new[] { "mountaingrave01" }, "Mountain Grave", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_mountainwell", new[] { "mountainwell1" }, "Mountain Well", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_waymarker", new[] { "waymarker01", "waymarker02" }, "Waymarker", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_drakenest", new[] { "drakenest01" }, "Drake Nest", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_goblintower", new[] { "ruin3", "stonetower1", "stonetower3" }, "Goblin Tower Ruins", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_goblincamp", new[] { "goblincamp2" }, "Goblin Camp", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_stonehenge", new[] { "stonehenge1", "stonehenge2", "stonehenge3", "stonehenge4", "stonehenge5", "stonehenge6" }, "Stonehenge", SecRuinLocations, LocationGroup.Ruin, "stone_ring.png"),
+            new LocationDefinition("ruin_tarpit", new[] { "tarpit1", "tarpit2", "tarpit3" }, "Tar Pit", SecRuinLocations, LocationGroup.Ruin, "tarpit.png"),
+            new LocationDefinition("ruin_swampgrave", new[] { "grave1" }, "Swamp Grave", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_swampruins", new[] { "swampruin1", "swampruin2" }, "Swamp Ruins", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_swampfirehole", new[] { "firehole" }, "Swamp Fire Hole", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_infestedtree", new[] { "infestedtree01" }, "Infested Tree", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_swamphut", new[] { "swamphut1", "swamphut2", "swamphut3", "swamphut4", "swamphut5" }, "Swamp Hut", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_swampwell", new[] { "swampwell1" }, "Swamp Well", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+            new LocationDefinition("ruin_meteorite", new[] { "meteorite" }, "Meteorite", SecRuinLocations, LocationGroup.Ruin, "ruin.png"),
+        };
+
+        // Flat exact-match lookup built once from every LocationDefinition's PrefabNames - mirrors
+        // AliasLookup/BuildAliasLookup for creatures.
+        public static readonly Dictionary<string, LocationDefinition> LocationPrefabLookup = BuildLocationPrefabLookup();
+        public static readonly Dictionary<string, LocationDefinition> CanonicalLocationLookup = BuildCanonicalLocationLookup();
+
+        private static Dictionary<string, LocationDefinition> BuildLocationPrefabLookup()
+        {
+            var map = new Dictionary<string, LocationDefinition>();
+            foreach (var def in LocationDefinitions)
+            {
+                foreach (var prefab in def.PrefabNames)
+                {
+                    map[prefab] = def;
+                }
+            }
+            return map;
+        }
+
+        private static Dictionary<string, LocationDefinition> BuildCanonicalLocationLookup()
+        {
+            var map = new Dictionary<string, LocationDefinition>();
+            foreach (var def in LocationDefinitions)
+            {
+                map[def.CanonicalKey] = def;
+            }
+            return map;
+        }
+
+        public static readonly Dictionary<string, LocationConfigEntry> Locations = new Dictionary<string, LocationConfigEntry>();
+
+        // Used by ObjectEvaluator to guard its remaining generic/component-based rules (Runestones,
+        // Dungeons' component fallback) so they only act as a defense-in-depth net for prefabs the
+        // curated LocationDefinitions table doesn't already own, instead of double-pinning the same
+        // POI through two independent pipelines.
+        public static bool IsKnownLocationPrefab(string nameLower) =>
+            !string.IsNullOrEmpty(nameLower) && LocationPrefabLookup.ContainsKey(nameLower);
+
+        public static bool IsLocationGroupEnabled(LocationGroup group)
+        {
+            switch (group)
+            {
+                case LocationGroup.BossAltar: return Group_BossLocations.Value;
+                case LocationGroup.Landmark: return Group_LandmarkLocations.Value;
+                case LocationGroup.DungeonEntrance: return Group_DungeonLocations.Value;
+                case LocationGroup.Runestone: return Group_RunestoneLocations.Value;
+                case LocationGroup.Ruin: return Group_RuinLocations.Value;
+                default: return false;
+            }
+        }
+
         // General
         public static ConfigEntry<float> ScanRadius;
         public static ConfigEntry<float> UpdateInterval;
         public static ConfigEntry<float> ClusterDistance;
         public static ConfigEntry<int> ScanBatchCount;
+        public static ConfigEntry<float> LocationScanInterval;
 
         // Master Group Toggles
         public static ConfigEntry<bool> Group_Creatures;
@@ -189,6 +367,11 @@ namespace ValheimRadar
         public static ConfigEntry<bool> Group_FunctionalStructures;
         public static ConfigEntry<bool> Group_RuinsAndLocations;
         public static ConfigEntry<bool> Group_PointsOfInterest;
+        public static ConfigEntry<bool> Group_BossLocations;
+        public static ConfigEntry<bool> Group_LandmarkLocations;
+        public static ConfigEntry<bool> Group_DungeonLocations;
+        public static ConfigEntry<bool> Group_RunestoneLocations;
+        public static ConfigEntry<bool> Group_RuinLocations;
 
         // Creature Filters (fallback used for any creature without a specific entry above)
         public static ConfigEntry<bool> EnableMonsters;
@@ -234,22 +417,21 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackBeehives;
         public static ConfigEntry<bool> TrackTrader;
 
-        // Ruins & Locations
+        // Ruins & Locations (StoneRings/TarPits toggles removed - fully superseded by the
+        // ZoneSystem-based LocationDefinitions "Stone Circle"/"Stonehenge"/"Tar Pit" entries, see
+        // Group_RuinLocations)
         public static ConfigEntry<bool> TrackAbandonedRuins;
-        public static ConfigEntry<bool> TrackStoneRings;
         public static ConfigEntry<bool> TrackRunestones;
-        public static ConfigEntry<bool> TrackTarPits;
 
-        // Points of Interest (monster spawners, harvestable landmarks, and biome-specific
-        // structures - split from "Ruins & Locations" since it's a newer, separately-toggleable
-        // batch of additions)
+        // Points of Interest (monster spawners and harvestable landmarks - split from "Ruins &
+        // Locations" since it's a newer, separately-toggleable batch of additions. DrakeNest/
+        // DecorativeStatues/MistlandsPOI toggles removed - fully superseded by the ZoneSystem-based
+        // LocationDefinitions "Drake Nest"/"Mistlands Statue"/Ruins & Structures group entries, see
+        // Group_RuinLocations)
         public static ConfigEntry<bool> TrackGreydwarfNest;
         public static ConfigEntry<bool> TrackBodyPile;
         public static ConfigEntry<bool> TrackBonePile;
         public static ConfigEntry<bool> TrackGuck;
-        public static ConfigEntry<bool> TrackDrakeNest;
-        public static ConfigEntry<bool> TrackMistlandsPOI;
-        public static ConfigEntry<bool> TrackDecorativeStatues;
 
         private static int _order;
 
@@ -267,6 +449,7 @@ namespace ValheimRadar
             UpdateInterval = Bind(config, "1 - General", "UpdateInterval", 1.0f, "Scan interval in seconds.", new AcceptableValueRange<float>(0.1f, 10f));
             ClusterDistance = Bind(config, "1 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
             ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make newly-appearing/moving objects take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
+            LocationScanInterval = Bind(config, "1 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
 
             Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
             Group_Berries = Bind(config, "2 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
@@ -275,8 +458,13 @@ namespace ValheimRadar
             Group_RocksAndFlint = Bind(config, "2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
             Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, and ingots.");
             Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests, dungeon entrances, beehives.");
-            Group_RuinsAndLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for stone rings, abandoned ruins, runestones, tar pits.");
-            Group_PointsOfInterest = Bind(config, "2 - Master Groups", "Enable Points of Interest", true, "Master toggle for monster spawners, harvestable landmarks, traders, and biome-specific structures.");
+            Group_RuinsAndLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for abandoned ruins and runestones not covered by the dedicated Location groups below.");
+            Group_PointsOfInterest = Bind(config, "2 - Master Groups", "Enable Points of Interest", true, "Master toggle for monster spawners and harvestable landmarks.");
+            Group_BossLocations = Bind(config, "2 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
+            Group_LandmarkLocations = Bind(config, "2 - Master Groups", "Enable Landmarks Group", true, "Master toggle for the Start Temple and the Black Forest Trader.");
+            Group_DungeonLocations = Bind(config, "2 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town).");
+            Group_RunestoneLocations = Bind(config, "2 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations.");
+            Group_RuinLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Structures Group", true, "Master toggle for the full ZoneSystem-based ruins/structures roster (ruined houses, stone towers, shipwrecks, Mistlands structures, tar pits, etc.).");
 
             EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
             EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
@@ -291,6 +479,15 @@ namespace ValheimRadar
                     IsMonster = def.IsMonster,
                     Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}."),
                     MinStars = Bind(config, def.Section, $"{def.DisplayName} - Min Stars", 0, $"Minimum star level for {def.DisplayName} (0 = All, requires the toggle above to also be on). Not applicable to fish.", new AcceptableValueRange<int>(0, 3))
+                };
+            }
+
+            Locations.Clear();
+            foreach (var def in LocationDefinitions)
+            {
+                Locations[def.CanonicalKey] = new LocationConfigEntry
+                {
+                    Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}.")
                 };
             }
 
@@ -324,20 +521,15 @@ namespace ValheimRadar
             TrackChests = Bind(config, "15 - Structures (Functional)", "Chests & Containers", true, "Show natural/world-spawn treasure chests (player-built chests are never tracked).");
             TrackDungeons = Bind(config, "15 - Structures (Functional)", "Dungeons / Crypts / Caves", true, "Show dungeon-plane entrances (crypts, caves, etc.), detected by their teleport behavior rather than name.");
             TrackBeehives = Bind(config, "15 - Structures (Functional)", "Beehives", true, "Show wild Beehives (player-built beehives are never tracked).");
-            TrackTrader = Bind(config, "15 - Structures (Functional)", "Traders", true, "Show Haldor and the Bog Witch's camp.");
+            TrackTrader = Bind(config, "15 - Structures (Functional)", "Traders", true, "Show the Bog Witch's camp (the Black Forest Trader has its own toggle - see the Landmarks group).");
 
-            TrackAbandonedRuins = Bind(config, "16 - Structures (Ruins & World)", "Abandoned Farms & Ruins", true, "Show ruined houses, farmsteads, and towers.");
-            TrackStoneRings = Bind(config, "16 - Structures (Ruins & World)", "Stone Rings", true, "Show burial stone circles and rock formations.");
-            TrackRunestones = Bind(config, "16 - Structures (Ruins & World)", "Runestones", true, "Show lore and vegvisir runestones.");
-            TrackTarPits = Bind(config, "16 - Structures (Ruins & World)", "Tar Pits", true, "Show Plains tar pits. NOTE: reports suggest these may not currently be detectable at all - see ObjectEvaluator's TarPits rule comment.");
+            TrackAbandonedRuins = Bind(config, "16 - Structures (Ruins & World)", "Abandoned Farms & Ruins (Other)", true, "Show ruins not covered by the dedicated Location groups below (Combat Ruin, Meadows Village 2).");
+            TrackRunestones = Bind(config, "16 - Structures (Ruins & World)", "Runestones (Other)", true, "Show any runestone not covered by the dedicated Runestones group below (unlisted/modded variants).");
 
             TrackGreydwarfNest = Bind(config, "17 - Points of Interest", "Greydwarf Nest", true, "Show Greydwarf Nests (Black Forest monster spawner).");
             TrackBodyPile = Bind(config, "17 - Points of Interest", "Body Pile", true, "Show Body Piles (Swamp Draugr spawner).");
             TrackBonePile = Bind(config, "17 - Points of Interest", "Bone Pile", true, "Show Bone Piles (Swamp Skeleton spawner).");
             TrackGuck = Bind(config, "17 - Points of Interest", "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
-            TrackDrakeNest = Bind(config, "17 - Points of Interest", "Drake Nest", true, "Show Drake Nests (Mountain).");
-            TrackMistlandsPOI = Bind(config, "17 - Points of Interest", "Mistlands Structures", true, "Show Dvergr guard towers, lighthouses, harbours, excavation sites, giant remains, and ancient sword markers.");
-            TrackDecorativeStatues = Bind(config, "17 - Points of Interest", "Decorative Statues", false, "Show purely decorative Mistlands statues (no function - off by default).");
         }
     }
 }

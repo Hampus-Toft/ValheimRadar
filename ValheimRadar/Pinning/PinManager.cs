@@ -32,6 +32,15 @@ namespace ValheimRadar
         private static readonly Dictionary<string, TrackedItem> rawPersistentPoints = new Dictionary<string, TrackedItem>();
         private static bool rawPointsDirty;
 
+        // Every world Location ever discovered this session via LocationScanner, keyed by
+        // "loc:" + TrackedLocation.LocationKey. A completely separate store from
+        // rawPersistentPoints/PinData save file above - Locations have no ZDOID, so they can't go
+        // through RawPointKey/the ZDO-liveness check LoadWorldPins performs (see
+        // Models/TrackedLocation.cs). Each entry is already a single unique point (one Location = one
+        // pin), so unlike rawPersistentPoints there's no clustering pass here either.
+        private static readonly Dictionary<string, TrackedLocation> rawLocationPoints = new Dictionary<string, TrackedLocation>();
+        private static bool locationPointsDirty;
+
         // Live persistent clusters, maintained incrementally: a newly-recorded raw point is folded
         // into an existing cluster (or starts a new one) via ClusteringEngine.AddItem, rather than
         // reclustering the full discovery history from scratch every tick (see RecordRawPoints). Only
@@ -97,6 +106,8 @@ namespace ValheimRadar
             dirtyPersistentClusters.Clear();
             clusteredMaxDistance = -1f;
             persistentFullResyncPending = false;
+            rawLocationPoints.Clear();
+            locationPointsDirty = false;
         }
 
         // Merges newly-scanned persistent points into the durable raw store, keyed by ZDOID so the
@@ -285,6 +296,147 @@ namespace ValheimRadar
                 persistentFullResyncPending = false;
             }
         }
+
+        // Resolves and applies the icon for a just-recorded/just-loaded location point, exactly the
+        // same 3-tier lookup (specific PNG -> category PNG -> vanilla sprite) UpdateOrCreatePin
+        // itself falls back to for other categories - done explicitly here (rather than relying on
+        // UpdateOrCreatePin's own null-icon fallback) purely so RecordAndSyncLocations/
+        // DrawLoadedLocationPins can share one helper instead of duplicating the two
+        // ObjectEvaluator.Get*ForCategory calls twice each.
+        private static Sprite ResolveLocationIcon(TrackedLocation loc)
+        {
+            string iconPng = ObjectEvaluator.GetDefaultIconForCategory(loc.CategoryKey);
+            string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(loc.CategoryKey);
+            return string.IsNullOrEmpty(iconPng) ? null : ResolvePerObjectPin(loc.RawName, iconPng, vanillaIcon);
+        }
+
+        // Merges newly-discovered Locations (see LocationScanner.ScanLocations) into the raw store
+        // and immediately creates/updates each one's pin. A Location is discovered exactly once per
+        // world (LocationKey is deterministic from its own seeded world-gen position), so unlike
+        // RecordRawPoints there's no clustering pass and no "is this the same physical object
+        // rediscovered" proximity check needed - the key alone is the dedup.
+        public static void RecordAndSyncLocations(Minimap minimap, List<TrackedLocation> locations)
+        {
+            if (minimap == null) return;
+
+            foreach (var loc in locations)
+            {
+                string key = "loc:" + loc.LocationKey;
+                if (rawLocationPoints.ContainsKey(key)) continue;
+
+                rawLocationPoints[key] = loc;
+                locationPointsDirty = true;
+
+                UpdateOrCreatePin(minimap, key, loc.Position, loc.DisplayName, loc.DisplayName, loc.RawName, ResolveLocationIcon(loc), isPersistent: true, loc.CategoryKey);
+            }
+        }
+
+        // Pushes a pin for every Location currently in the raw store - called once, right after
+        // LoadLocationPins, on reconnect, so previously-discovered Locations redraw immediately
+        // instead of waiting for the next ScanLocations tick.
+        public static void DrawLoadedLocationPins(Minimap minimap)
+        {
+            if (minimap == null) return;
+
+            foreach (var kvp in rawLocationPoints)
+            {
+                TrackedLocation loc = kvp.Value;
+                UpdateOrCreatePin(minimap, kvp.Key, loc.Position, loc.DisplayName, loc.DisplayName, loc.RawName, ResolveLocationIcon(loc), isPersistent: true, loc.CategoryKey);
+            }
+        }
+
+        // Sibling save file to the resource PinData file above (<world>.locations.txt, own #locv1
+        // version tag) rather than an extension of that format - the resource format is hard-coded to
+        // exactly 8 fields including two ZDOID integers and a ZDOMan.GetZDO liveness check that has
+        // no meaning for a Location (no ZDO exists to check - a Location's position is static and
+        // never "dies"), so reusing it would mean branching the entire load loop on record type for
+        // no real benefit.
+        private const int LocationSaveFormatVersion = 1;
+
+        public static void SaveLocationPins(string worldName)
+        {
+            if (!locationPointsDirty || string.IsNullOrEmpty(worldName)) return;
+
+            List<string> lines = new List<string> { $"#locv{LocationSaveFormatVersion}" };
+            foreach (var loc in rawLocationPoints.Values)
+            {
+                lines.Add(string.Join("|",
+                    Escape(loc.LocationKey),
+                    loc.Position.x.ToString(CultureInfo.InvariantCulture),
+                    loc.Position.y.ToString(CultureInfo.InvariantCulture),
+                    loc.Position.z.ToString(CultureInfo.InvariantCulture),
+                    Escape(loc.DisplayName),
+                    Escape(loc.RawName),
+                    Escape(loc.CategoryKey)));
+            }
+
+            try
+            {
+                Directory.CreateDirectory(PinDataFolder);
+                File.WriteAllLines(GetLocationSaveFilePath(worldName), lines);
+                locationPointsDirty = false;
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to save persisted location pins: {ex.Message}");
+            }
+        }
+
+        // Restores previously discovered Locations for this world into the raw store. Does not touch
+        // the minimap itself - the caller (RadarPlugin, on reconnect) is expected to follow up with
+        // DrawLoadedLocationPins, mirroring how LoadWorldPins/RebuildPersistentClusters/
+        // SyncPersistentClusters are sequenced for resource pins.
+        public static void LoadLocationPins(string worldName)
+        {
+            rawLocationPoints.Clear();
+            locationPointsDirty = false;
+
+            if (string.IsNullOrEmpty(worldName)) return;
+
+            string path = GetLocationSaveFilePath(worldName);
+            if (!File.Exists(path)) return;
+
+            try
+            {
+                string[] allLines = File.ReadAllLines(path);
+                int startIndex = allLines.Length > 0 && allLines[0].StartsWith("#locv", StringComparison.Ordinal) ? 1 : 0;
+
+                for (int i = startIndex; i < allLines.Length; i++)
+                {
+                    string line = allLines[i];
+                    if (string.IsNullOrEmpty(line)) continue;
+
+                    string[] parts = line.Split('|');
+                    if (parts.Length != 7) continue;
+
+                    string locationKey = Unescape(parts[0]);
+                    if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x)) continue;
+                    if (!float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y)) continue;
+                    if (!float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z)) continue;
+
+                    string displayName = Unescape(parts[4]);
+                    string rawName = Unescape(parts[5]);
+                    string categoryKey = Unescape(parts[6]);
+
+                    if (string.IsNullOrEmpty(locationKey) || string.IsNullOrEmpty(displayName)) continue;
+
+                    rawLocationPoints["loc:" + locationKey] = new TrackedLocation
+                    {
+                        LocationKey = locationKey,
+                        Position = new Vector3(x, y, z),
+                        DisplayName = displayName,
+                        RawName = rawName,
+                        CategoryKey = categoryKey
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to load persisted location pins: {ex.Message}");
+            }
+        }
+
+        private static string GetLocationSaveFilePath(string worldName) => GetSaveFilePath(worldName, ".locations.txt");
 
         /// <summary>
         /// Resolves the minimap icon Sprite for a tracked object, or null to use the vanilla
@@ -663,6 +815,17 @@ namespace ValheimRadar
                 case "Dungeons":
                     return false;
 
+                // Fully superseded by the ZoneSystem-based LocationDefinitions roster (see
+                // Scanning/LocationScanner.cs) - these old resource-pipeline points are dropped here;
+                // the next location-scan tick re-adds the same POIs correctly under "location:*" keys
+                // in the separate rawLocationPoints store instead.
+                case "DecorativeStatues":
+                case "DrakeNest":
+                case "TarPits":
+                case "StoneRings":
+                case "MistlandsPOI":
+                    return false;
+
                 default:
                     // Every other id (berries, mushrooms, crops, ground pickables, chests, beehives,
                     // runestones, stone rings, abandoned ruins, tar pits) kept its old id unchanged -
@@ -681,7 +844,7 @@ namespace ValheimRadar
             return string.IsNullOrEmpty(value) ? string.Empty : Uri.UnescapeDataString(value);
         }
 
-        private static string GetSaveFilePath(string worldName)
+        private static string GetSaveFilePath(string worldName, string suffix = ".txt")
         {
             char[] invalid = Path.GetInvalidFileNameChars();
             char[] safeChars = new char[worldName.Length];
@@ -691,7 +854,7 @@ namespace ValheimRadar
                 safeChars[i] = Array.IndexOf(invalid, c) >= 0 ? '_' : c;
             }
 
-            return Path.Combine(PinDataFolder, $"{new string(safeChars)}.txt");
+            return Path.Combine(PinDataFolder, $"{new string(safeChars)}{suffix}");
         }
     }
 }

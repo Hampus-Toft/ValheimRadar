@@ -46,41 +46,33 @@ namespace ValheimRadar
             return false;
         }
 
-        // Prefab name (lowercase) -> friendly dungeon label. High-confidence entries sourced from
-        // Jotunn's generated prefab list (component-tagged) cross-checked against the Valheim wiki.
+        // Prefab name (lowercase) -> friendly dungeon label, for entrance prefabs NOT already owned
+        // by RadarConfig.LocationDefinitions (see the Dungeon Entrances / Boss Altars groups, which
+        // supersede crypt2/3/4, sunkencrypt4, trollcave02, mountaincave02, the Dvergr town/boss
+        // entrances - those are now discovered reliably via ZoneSystem instead of this physics-scan
+        // fallback). What's left here is entrance content the curated Location table doesn't cover.
         // Anything with the right Teleport+DungeonGenerator signature but not listed here still gets
         // pinned via the "Dungeons" ResourceRule below, just as a generic "Dungeon Entrance" - nothing
         // is silently dropped, only unlabeled until confirmed.
         private static readonly Dictionary<string, string> DungeonEntranceNames = new Dictionary<string, string>
         {
-            ["crypt2"] = "Burial Chambers",
-            ["crypt3"] = "Burial Chambers",
-            ["crypt4"] = "Burial Chambers",
             ["halfburried_forestcrypt"] = "Burial Chambers",
             ["hildir_crypt"] = "Burial Chambers (Hildir)",
-            ["sunkencrypt4"] = "Sunken Crypts",
-            ["mountaincave02"] = "Frost Caves",
             ["hildir_cave"] = "Frost Caves (Hildir)",
-            ["mistlands_dvergrbossentrance1"] = "Infested Mines",
-            ["mistlands_dvergrtownentrance1"] = "Dvergr Camp",
-            ["mistlands_dvergrtownentrance2"] = "Dvergr Camp",
-            ["trollcave02"] = "Troll Cave",
             ["bearcave"] = "Bear Cave",
         };
 
         // Every prefab name DungeonEntranceNames knows about, lowercased - matched directly (in
-        // addition to the Teleport+DungeonGenerator component check below) because TrollCave02 and
-        // BearCave are confirmed to carry only a Teleport component, no DungeonGenerator, so the
-        // component check alone would never catch them; and because the visible "entrance you walk
-        // up to" for some crypts may not be the same GameObject the Teleport/DungeonGenerator
-        // components actually sit on, so an exact-name match here is the reliable primary signal,
-        // with the component check kept only as a fallback net for anything not in this table.
+        // addition to the Teleport+DungeonGenerator component check below) because BearCave is
+        // confirmed to carry only a Teleport component, no DungeonGenerator, so the component check
+        // alone would never catch it; and because the visible "entrance you walk up to" for some
+        // crypts may not be the same GameObject the Teleport/DungeonGenerator components actually
+        // sit on, so an exact-name match here is the reliable primary signal, with the component
+        // check kept only as a fallback net for anything not in this table (and not already owned by
+        // RadarConfig.LocationDefinitions - see the IsKnownLocationPrefab guard below).
         private static readonly string[] KnownDungeonEntranceAliases =
         {
-            "crypt2", "crypt3", "crypt4", "halfburried_forestcrypt", "hildir_crypt",
-            "sunkencrypt4", "mountaincave02", "hildir_cave",
-            "mistlands_dvergrbossentrance1", "mistlands_dvergrtownentrance1", "mistlands_dvergrtownentrance2",
-            "trollcave02", "bearcave",
+            "halfburried_forestcrypt", "hildir_crypt", "hildir_cave", "bearcave",
         };
 
         // Resource/structure categories, evaluated in this order. The first rule whose group+track
@@ -174,7 +166,9 @@ namespace ValheimRadar
             // FUNCTIONAL STRUCTURES
             new ResourceRule("Beehives", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBeehives.Value, (go, n) => IsExactAlias(n, "beehive"), "beehive.png", "beehive"),
 
-            new ResourceRule("Trader", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackTrader.Value, (go, n) => IsExactAlias(n, "vendor_blackforest", "bogwitch_camp"), "ruin.png", null, Const("Trader")),
+            // vendor_blackforest (Haldor) is now owned by RadarConfig.LocationDefinitions' Landmarks
+            // group - discovered reliably via ZoneSystem instead of this physics-scan fallback.
+            new ResourceRule("Trader", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackTrader.Value, (go, n) => IsExactAlias(n, "bogwitch_camp"), "ruin.png", null, Const("Trader")),
 
             // Chests: exact whitelist of natural/world-spawn loot containers. Player-buildable
             // chests (piece_chest*) are structurally IDENTICAL (same Container+Piece+WearNTear
@@ -202,59 +196,45 @@ namespace ValheimRadar
             // check alone would never catch them. Friendly names are looked up by exact prefab name;
             // anything caught only by the component fallback still gets pinned, just as a generic
             // "Dungeon Entrance" - nothing is silently dropped.
+            // Component-fallback branch guarded against RadarConfig.IsKnownLocationPrefab so it acts
+            // only as a defense-in-depth net for entrances the curated LocationDefinitions table
+            // doesn't already own (unlisted/modded variants), not a duplicate source for the ones it
+            // does (crypt2/3/4, sunkencrypt4, trollcave02, mountaincave02, the Dvergr entrances).
             new ResourceRule("Dungeons", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackDungeons.Value,
-                (go, n) => IsExactAlias(n, KnownDungeonEntranceAliases) || (go.GetComponent<Teleport>() != null && go.GetComponent<DungeonGenerator>() != null),
+                (go, n) => IsExactAlias(n, KnownDungeonEntranceAliases) || (!RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<Teleport>() != null && go.GetComponent<DungeonGenerator>() != null),
                 "dungeon.png", null, n => DungeonEntranceNames.TryGetValue(n, out string label) ? label : "Dungeon Entrance"),
 
             // Player-crafted portals are deliberately NOT pinned - there is no natural equivalent
             // in vanilla Valheim. The old "Portals" rule (matching any TeleportWorld component or
             // Contains("portal")) has been removed entirely, along with RadarConfig.TrackPortals.
 
-            // RUNESTONES - every biome runestone (and the boss-summoning ones) carries a RuneStone
-            // component, so this category can stay component-based rather than needing an
-            // exhaustive name list.
-            new ResourceRule("Runestones", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackRunestones.Value, (go, n) => go.GetComponent<RuneStone>() != null, "runestone.png"),
+            // RUNESTONES (fallback only) - every biome runestone carries a RuneStone component, so
+            // this stays component-based, but guarded against RadarConfig.IsKnownLocationPrefab so it
+            // only catches runestones NOT already owned by RadarConfig.LocationDefinitions' Runestones
+            // group (which discovers every biome variant reliably via ZoneSystem) - e.g. unlisted or
+            // modded runestone prefabs.
+            new ResourceRule("Runestones", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackRunestones.Value, (go, n) => !RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<RuneStone>() != null, "runestone.png"),
 
-            new ResourceRule("StoneRings", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackStoneRings.Value, (go, n) => IsExactAlias(n, "stonecircle", "stonehenge1", "stonehenge2", "stonehenge3", "stonehenge4", "stonehenge5", "stonehenge6"), "stone_ring.png"),
-
+            // combatruin01/woodvillage2 have no equivalent in RadarConfig.LocationDefinitions -
+            // everything else this rule used to match (stonetowerruins*, woodhouse1-13, woodfarm1,
+            // woodvillage1, abandonedlogcabin02-04) is now owned by the Ruins & Structures group,
+            // discovered reliably via ZoneSystem instead of this physics-scan fallback.
             new ResourceRule("AbandonedRuins", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackAbandonedRuins.Value, (go, n) => IsExactAlias(n,
-                "abandonedlogcabin02", "abandonedlogcabin03", "abandonedlogcabin04", "combatruin01",
-                "stonetowerruins03", "stonetowerruins04", "stonetowerruins05", "stonetowerruins05_leet", "stonetowerruins07", "stonetowerruins07_sunk", "stonetowerruins08", "stonetowerruins08_sunk", "stonetowerruins09", "stonetowerruins09_sunk",
-                "woodhouse1", "woodhouse2", "woodhouse3", "woodhouse4", "woodhouse5", "woodhouse6", "woodhouse7", "woodhouse8", "woodhouse9", "woodhouse10", "woodhouse11", "woodhouse12", "woodhouse13",
-                "woodfarm1", "woodvillage1", "woodvillage2"
+                "combatruin01", "woodvillage2"
             ), "ruin.png"),
-
-            // TarPit1/2/3 are "Location"-type prefabs - the root object has no ZNetView of its own;
-            // only child objects (the tar CreatureSpawner/Pickable) are individually networked.
-            // These exact names match the LOCATION's own name, which may not be the name of the
-            // actual ZNetView-bearing GameObject our Physics-based scan ends up hitting - reported
-            // as still not appearing in-game despite these being the verified real location names.
-            // Left as-is pending in-game verification of what the scanner actually detects near a
-            // tar pit (if anything) - not a guessed name, so no better alias to try without that.
-            new ResourceRule("TarPits", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackTarPits.Value, (go, n) => IsExactAlias(n, "tarpit1", "tarpit1_1", "tarpit2", "tarpit2_1", "tarpit3", "tarpit3_1"), "tarpit.png"),
 
             // POINTS OF INTEREST
             new ResourceRule("GreydwarfNest", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGreydwarfNest.Value, (go, n) => IsExactAlias(n, "spawner_greydwarfnest"), "ruin.png", null, Const("Greydwarf Nest")),
             new ResourceRule("BodyPile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBodyPile.Value, (go, n) => IsExactAlias(n, "spawner_draugrpile"), "ruin.png", null, Const("Body Pile")),
             new ResourceRule("BonePile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBonePile.Value, (go, n) => IsExactAlias(n, "bonepilespawner", "bonepilespawner_swamp"), "ruin.png", null, Const("Bone Pile")),
             new ResourceRule("Guck", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", null, Const("Guck Sack")),
-            new ResourceRule("DrakeNest", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackDrakeNest.Value, (go, n) => IsExactAlias(n, "drakenest01"), "ruin.png", null, Const("Drake Nest")),
 
-            // Mistlands structures - bundled under one toggle rather than one each. No
-            // DisplayNameOverride: each has a distinct enough raw name that the existing
-            // hover-text/FormatHumanFriendlyName fallback produces a reasonable label
-            // (e.g. "Mistlands Lighthouse1 New").
-            new ResourceRule("MistlandsPOI", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackMistlandsPOI.Value, (go, n) => IsExactAlias(n,
-                "mistlands_guardtower1_new", "mistlands_guardtower2_new", "mistlands_guardtower3_new",
-                "mistlands_lighthouse1_new", "mistlands_harbour1",
-                "mistlands_excavation1", "mistlands_excavation2", "mistlands_excavation3",
-                "mistlands_giant1", "mistlands_giant2",
-                "mistlands_swords1", "mistlands_swords2", "mistlands_swords3"
-            ), "ruin.png"),
-
-            // Purely decorative, no gameplay function - pinnable but off by default per explicit
-            // request, since most players will want these toggled off.
-            new ResourceRule("DecorativeStatues", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackDecorativeStatues.Value, (go, n) => IsExactAlias(n, "mistlands_statue1", "mistlands_statue2", "mistlands_statuegroup1"), "ruin.png", null, Const("Statue")),
+            // The old "MistlandsPOI" rule (guard towers, lighthouse, harbour, excavation sites,
+            // giant remains, sword markers) has been removed entirely - every alias it matched is now
+            // owned by RadarConfig.LocationDefinitions' Ruins & Structures group ("Dvergr Guard
+            // Tower", "Mistlands Lighthouse", "Mistlands Harbour", "Dvergr Excavation", "Giant
+            // Remains", "Giant Swords"), discovered reliably via ZoneSystem instead of this
+            // physics-scan fallback.
         };
 
         // Destruction-fragment/debris pieces (e.g. a boss arena's stone pillars shattering apart on
@@ -451,17 +431,22 @@ namespace ValheimRadar
                 {
                     if (rule.Id == id) return rule.Enabled();
                 }
+                return false;
             }
+
+            if (categoryKey.StartsWith("location:")) return LocationScanner.IsLocationCategoryEnabled(categoryKey);
 
             return false;
         }
 
-        // Only resource/structure categories are persisted to disk (see PinManager), so this only
-        // needs to resolve icons for "resource:" keys - used to re-resolve the icon Sprite after
-        // loading cached pin positions from a previous session.
+        // Only resource/structure and location categories are persisted to disk (see PinManager), so
+        // this only needs to resolve icons for "resource:"/"location:" keys - used to re-resolve the
+        // icon Sprite after loading cached pin positions from a previous session.
         public static string GetDefaultIconForCategory(string categoryKey)
         {
-            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return null;
+            if (string.IsNullOrEmpty(categoryKey)) return null;
+            if (categoryKey.StartsWith("location:")) return LocationScanner.GetLocationIconPng(categoryKey);
+            if (!categoryKey.StartsWith("resource:")) return null;
 
             string id = categoryKey.Substring("resource:".Length);
             foreach (var rule in ResourceRules)
@@ -477,7 +462,9 @@ namespace ValheimRadar
         // the same per-type icon as freshly-scanned ones instead of only the category PNG/fallback.
         public static string GetVanillaIconForCategory(string categoryKey)
         {
-            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return null;
+            if (string.IsNullOrEmpty(categoryKey)) return null;
+            if (categoryKey.StartsWith("location:")) return LocationScanner.GetLocationVanillaIcon(categoryKey);
+            if (!categoryKey.StartsWith("resource:")) return null;
 
             string id = categoryKey.Substring("resource:".Length);
             foreach (var rule in ResourceRules)

@@ -41,6 +41,26 @@ type alone (a natural loot chest and a player-built one share an identical
 Container+Piece+WearNTear signature), so naming is the only signal and player
 variants are simply excluded from the whitelist entirely.
 
+## World Locations (dungeons, ruins, boss altars, runestones, etc.)
+
+The same 4-tier resolution above also covers the ~53 world "Location" POI
+types discovered via `Scanning/LocationScanner.cs` (`RadarConfig
+.LocationDefinitions` - see `PinManager.ResolveLocationIcon`), using the
+same `<key>.png`/`<category>.png` override convention. Two new category PNG
+names exist for this roster with no earlier precedent to reuse:
+
+- `boss_altar.png` - Boss Altars group (Eikthyr/Elder/Bonemass/Moder/Yagluth
+  altars, the Queen's entrance). Each also has a verified vanilla trophy-icon
+  fallback (tier 3), so a custom PNG here is optional, not required.
+- `landmark.png` - Landmarks group (Start Temple, Black Forest Trader).
+
+Everything else in the Location roster reuses the existing `dungeon.png`,
+`runestone.png`, `ruin.png`, `stone_ring.png`, and `tarpit.png` category
+names. None of these have a vanilla-icon fallback (tier 3 is a no-op for
+them, same as for the older structure categories above), so an unpinned type
+falls straight through to the built-in default pin (tier 4) - fully
+functional out of the box, just visually generic until a PNG is supplied.
+
 ## Naming key
 
 The "key" used for both the specific-PNG lookup and the vanilla-icon lookup is
