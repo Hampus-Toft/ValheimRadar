@@ -17,18 +17,26 @@ namespace ValheimRadar
 
         public sealed class CreatureDefinition
         {
-            // Key doubles as the substring matched against the lowercased prefab name, so more
-            // specific keys (e.g. "greydwarf_elite") must be declared before shorter ones they
-            // overlap with (e.g. "greydwarf").
-            public readonly string Key;
+            // Stable id used for the Creatures dictionary, the "creature:{key}" categoryKey, and
+            // VanillaIconResolver's trophy-sprite table. Not required to be a real prefab name.
+            public readonly string CanonicalKey;
+
+            // Exact, lowercased raw prefab names (verbatim GameObject.name.ToLower(), no prefix
+            // stripping - see ObjectEvaluator.IsExactAlias) that all count as this species/fish.
+            // Matched via a flat dictionary (AliasLookup below) instead of an ordered substring
+            // scan, so declaration order no longer affects correctness the way it used to (a
+            // variant like "greydwarf_elite" no longer needs to be declared before "greydwarf").
+            public readonly string[] Aliases;
+
             public readonly string DisplayName;
             public readonly string Section;
             public readonly bool IsMonster;
             public readonly bool DefaultEnabled;
 
-            public CreatureDefinition(string key, string displayName, string section, bool isMonster, bool defaultEnabled = true)
+            public CreatureDefinition(string canonicalKey, string[] aliases, string displayName, string section, bool isMonster, bool defaultEnabled = true)
             {
-                Key = key;
+                CanonicalKey = canonicalKey;
+                Aliases = aliases;
                 DisplayName = displayName;
                 Section = section;
                 IsMonster = isMonster;
@@ -49,54 +57,109 @@ namespace ValheimRadar
         private const string SecMountain = "7 - Creatures (Mountain)";
         private const string SecPlains = "8 - Creatures (Plains)";
         private const string SecMistlands = "9 - Creatures (Mistlands)";
+        private const string SecBosses = "3b - Bosses & Notable Creatures";
+        private const string SecFish = "9b - Creatures (Fish)";
 
         public static readonly CreatureDefinition[] CreatureDefinitions =
         {
             // MEADOWS
-            new CreatureDefinition("boar", "Boar", SecMeadows, isMonster: false),
-            new CreatureDefinition("neck", "Neck", SecMeadows, isMonster: false),
-            new CreatureDefinition("deer", "Deer", SecMeadows, isMonster: false),
-            new CreatureDefinition("greyling", "Greyling", SecMeadows, isMonster: true),
+            new CreatureDefinition("boar", new[] { "boar" }, "Boar", SecMeadows, isMonster: false),
+            new CreatureDefinition("neck", new[] { "neck" }, "Neck", SecMeadows, isMonster: false),
+            new CreatureDefinition("deer", new[] { "deer", "deer_white" }, "Deer", SecMeadows, isMonster: false),
+            new CreatureDefinition("greyling", new[] { "greyling" }, "Greyling", SecMeadows, isMonster: true),
 
             // BLACK FOREST
-            new CreatureDefinition("greydwarf_shaman", "Greydwarf Shaman", SecBlackForest, isMonster: true),
-            new CreatureDefinition("greydwarf_elite", "Greydwarf Brute", SecBlackForest, isMonster: true),
-            new CreatureDefinition("greydwarf", "Greydwarf", SecBlackForest, isMonster: true),
-            new CreatureDefinition("skeleton", "Skeleton", SecBlackForest, isMonster: true),
-            new CreatureDefinition("troll", "Troll", SecBlackForest, isMonster: true),
+            new CreatureDefinition("greydwarf", new[] { "greydwarf" }, "Greydwarf", SecBlackForest, isMonster: true),
+            new CreatureDefinition("greydwarf_elite", new[] { "greydwarf_elite" }, "Greydwarf Brute", SecBlackForest, isMonster: true),
+            new CreatureDefinition("greydwarf_shaman", new[] { "greydwarf_shaman" }, "Greydwarf Shaman", SecBlackForest, isMonster: true),
+            new CreatureDefinition("skeleton", new[] { "skeleton", "skeleton_meadows", "skeleton_mountains", "skeleton_swamps", "skeleton_poison", "skeleton_hildir" }, "Skeleton", SecBlackForest, isMonster: true),
+            new CreatureDefinition("troll", new[] { "troll" }, "Troll", SecBlackForest, isMonster: true),
 
             // SWAMP
-            new CreatureDefinition("draugr_elite", "Draugr Elite", SecSwamp, isMonster: true),
-            new CreatureDefinition("draugr", "Draugr", SecSwamp, isMonster: true),
-            new CreatureDefinition("blob_elite", "Poison Blob", SecSwamp, isMonster: true),
-            new CreatureDefinition("blob", "Blob", SecSwamp, isMonster: true),
-            new CreatureDefinition("leech", "Leech", SecSwamp, isMonster: true),
-            new CreatureDefinition("wraith", "Wraith", SecSwamp, isMonster: true),
-            new CreatureDefinition("abomination", "Abomination", SecSwamp, isMonster: true),
+            new CreatureDefinition("draugr", new[] { "draugr", "draugr_ranged" }, "Draugr", SecSwamp, isMonster: true),
+            new CreatureDefinition("draugr_elite", new[] { "draugr_elite" }, "Draugr Elite", SecSwamp, isMonster: true),
+            new CreatureDefinition("blob", new[] { "blob" }, "Blob", SecSwamp, isMonster: true),
+            new CreatureDefinition("blob_elite", new[] { "blob_elite" }, "Poison Blob", SecSwamp, isMonster: true),
+            new CreatureDefinition("leech", new[] { "leech" }, "Leech", SecSwamp, isMonster: true),
+            new CreatureDefinition("wraith", new[] { "wraith" }, "Wraith", SecSwamp, isMonster: true),
+            new CreatureDefinition("abomination", new[] { "abomination" }, "Abomination", SecSwamp, isMonster: true),
 
             // MOUNTAIN
-            new CreatureDefinition("wolf", "Wolf", SecMountain, isMonster: true),
-            new CreatureDefinition("bear", "Bear", SecMountain, isMonster: false),
-            new CreatureDefinition("stonegolem", "Stone Golem", SecMountain, isMonster: true),
-            new CreatureDefinition("drake", "Drake", SecMountain, isMonster: true),
+            new CreatureDefinition("wolf", new[] { "wolf", "wolf_cub", "wolf_spiritcaller" }, "Wolf", SecMountain, isMonster: true),
+            // Real prefab is "Bjorn" - "bear" never appears in it, which is why Bear silently
+            // failed classification (and therefore its icon) entirely under the old
+            // nameLower.Contains("bear") substring check. Bjorn_ragdoll (corpse) is deliberately
+            // excluded - it's not a live creature to pin.
+            new CreatureDefinition("bear", new[] { "bjorn", "bjorn_sleeping", "bjorn_spiritcaller" }, "Bear", SecMountain, isMonster: false),
+            new CreatureDefinition("stonegolem", new[] { "stonegolem" }, "Stone Golem", SecMountain, isMonster: true),
+            new CreatureDefinition("drake", new[] { "drake" }, "Drake", SecMountain, isMonster: true),
 
             // PLAINS
-            new CreatureDefinition("lox", "Lox", SecPlains, isMonster: false),
-            new CreatureDefinition("deathsquito", "Deathsquito", SecPlains, isMonster: true),
-            new CreatureDefinition("fuling_berserker", "Fuling Berserker", SecPlains, isMonster: true),
-            new CreatureDefinition("fuling_shaman", "Fuling Shaman", SecPlains, isMonster: true),
-            new CreatureDefinition("fuling", "Fuling", SecPlains, isMonster: true),
-            new CreatureDefinition("growth", "Growth (Lox Spawn)", SecPlains, isMonster: true),
+            new CreatureDefinition("lox", new[] { "lox", "lox_calf" }, "Lox", SecPlains, isMonster: false),
+            new CreatureDefinition("deathsquito", new[] { "deathsquito" }, "Deathsquito", SecPlains, isMonster: true),
+            new CreatureDefinition("fuling", new[] { "fuling" }, "Fuling", SecPlains, isMonster: true),
+            new CreatureDefinition("fuling_berserker", new[] { "fuling_berserker" }, "Fuling Berserker", SecPlains, isMonster: true),
+            new CreatureDefinition("fuling_shaman", new[] { "fuling_shaman" }, "Fuling Shaman", SecPlains, isMonster: true),
+            new CreatureDefinition("growth", new[] { "growth" }, "Growth (Lox Spawn)", SecPlains, isMonster: true),
 
             // MISTLANDS
-            new CreatureDefinition("seeker_brood", "Seeker Brood", SecMistlands, isMonster: true),
-            new CreatureDefinition("seeker", "Seeker", SecMistlands, isMonster: true),
-            new CreatureDefinition("gjall", "Gjall", SecMistlands, isMonster: true),
-            new CreatureDefinition("tick", "Tick", SecMistlands, isMonster: true),
-            new CreatureDefinition("dvergrmage", "Dvergr Mage", SecMistlands, isMonster: true),
-            new CreatureDefinition("dvergr", "Dvergr", SecMistlands, isMonster: false),
-            new CreatureDefinition("fenring", "Fenring", SecMistlands, isMonster: true),
+            new CreatureDefinition("seeker", new[] { "seeker" }, "Seeker", SecMistlands, isMonster: true),
+            new CreatureDefinition("seeker_brood", new[] { "seeker_brood" }, "Seeker Brood", SecMistlands, isMonster: true),
+            new CreatureDefinition("gjall", new[] { "gjall" }, "Gjall", SecMistlands, isMonster: true),
+            new CreatureDefinition("tick", new[] { "tick" }, "Tick", SecMistlands, isMonster: true),
+            new CreatureDefinition("dvergr", new[] { "dvergr" }, "Dvergr", SecMistlands, isMonster: false),
+            new CreatureDefinition("dvergrmage", new[] { "dvergrmage" }, "Dvergr Mage", SecMistlands, isMonster: true),
+            new CreatureDefinition("fenring", new[] { "fenring", "fenring_cultist" }, "Fenring", SecMistlands, isMonster: true),
+
+            // BOSSES & NOTABLE CREATURES - previously only reachable via the generic hostile
+            // fallback (no CreatureDefinitions entry existed for any of these), so individually
+            // un-toggleable and dependent on VanillaIconResolver's boss-trophy entries matching
+            // by accident via the raw cleaned prefab name.
+            new CreatureDefinition("eikthyr", new[] { "eikthyr" }, "Eikthyr", SecBosses, isMonster: true),
+            new CreatureDefinition("elder", new[] { "gd_king" }, "The Elder", SecBosses, isMonster: true),
+            new CreatureDefinition("bonemass", new[] { "bonemass" }, "Bonemass", SecBosses, isMonster: true),
+            new CreatureDefinition("moder", new[] { "dragon" }, "Moder", SecBosses, isMonster: true),
+            new CreatureDefinition("yagluth", new[] { "goblinking" }, "Yagluth", SecBosses, isMonster: true),
+            new CreatureDefinition("queen", new[] { "seekerqueen" }, "The Queen", SecBosses, isMonster: true),
+            new CreatureDefinition("fader", new[] { "fader" }, "Fader", SecBosses, isMonster: true),
+            new CreatureDefinition("serpent", new[] { "serpent" }, "Sea Serpent", SecBosses, isMonster: true),
+
+            // FISH - Fish prefabs (Fish1..Fish12) have no Character/Humanoid component at all,
+            // just Fish+ItemDrop, so they never went through ShouldPinGameObject's Character-based
+            // creature branch before; see ObjectEvaluator's dedicated Fish detection path. Folded
+            // into the same Group_Creatures toggle and AliasLookup as regular creatures.
+            new CreatureDefinition("fish_perch", new[] { "fish1" }, "Perch", SecFish, isMonster: false),
+            new CreatureDefinition("fish_pike", new[] { "fish2" }, "Pike", SecFish, isMonster: false),
+            new CreatureDefinition("fish_tuna", new[] { "fish3" }, "Tuna", SecFish, isMonster: false),
+            new CreatureDefinition("fish_tetra", new[] { "fish4_cave" }, "Tetra", SecFish, isMonster: false),
+            new CreatureDefinition("fish_trollfish", new[] { "fish5" }, "Trollfish", SecFish, isMonster: false),
+            new CreatureDefinition("fish_giantherring", new[] { "fish6" }, "Giant Herring", SecFish, isMonster: false),
+            new CreatureDefinition("fish_grouper", new[] { "fish7" }, "Grouper", SecFish, isMonster: false),
+            new CreatureDefinition("fish_coralcod", new[] { "fish8" }, "Coral Cod", SecFish, isMonster: false),
+            new CreatureDefinition("fish_anglerfish", new[] { "fish9" }, "Anglerfish", SecFish, isMonster: false),
+            new CreatureDefinition("fish_northernsalmon", new[] { "fish10" }, "Northern Salmon", SecFish, isMonster: false),
+            new CreatureDefinition("fish_magmafish", new[] { "fish11" }, "Magmafish", SecFish, isMonster: false),
+            new CreatureDefinition("fish_pufferfish", new[] { "fish12" }, "Pufferfish", SecFish, isMonster: false),
         };
+
+        // Flat exact-match lookup built once from every CreatureDefinition's Aliases - replaces
+        // the old ordered Contains() scan (see ObjectEvaluator.FindCreatureOverride). Declaration
+        // order in CreatureDefinitions above no longer matters for correctness now that matching
+        // is exact.
+        public static readonly Dictionary<string, CreatureDefinition> AliasLookup = BuildAliasLookup();
+
+        private static Dictionary<string, CreatureDefinition> BuildAliasLookup()
+        {
+            var map = new Dictionary<string, CreatureDefinition>();
+            foreach (var def in CreatureDefinitions)
+            {
+                foreach (var alias in def.Aliases)
+                {
+                    map[alias] = def;
+                }
+            }
+            return map;
+        }
 
         public static readonly Dictionary<string, CreatureConfigEntry> Creatures = new Dictionary<string, CreatureConfigEntry>();
 
@@ -147,7 +210,7 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackStone;
         public static ConfigEntry<bool> TrackWood;
 
-        // Ores
+        // Ores (each now gates a Deposit/Ore/Ingot trio - see ObjectEvaluator.ResourceRules)
         public static ConfigEntry<bool> TrackCopper;
         public static ConfigEntry<bool> TrackTin;
         public static ConfigEntry<bool> TrackIron;
@@ -156,7 +219,6 @@ namespace ValheimRadar
         // Functional Structures
         public static ConfigEntry<bool> TrackChests;
         public static ConfigEntry<bool> TrackDungeons;
-        public static ConfigEntry<bool> TrackPortals;
         public static ConfigEntry<bool> TrackBeehives;
 
         // Ruins & Locations
@@ -182,61 +244,60 @@ namespace ValheimRadar
             ClusterDistance = Bind(config, "1 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
             ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make newly-appearing/moving objects take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
 
-            Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures.");
+            Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
             Group_Berries = Bind(config, "2 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
             Group_Mushrooms = Bind(config, "2 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
-            Group_FlowersAndCrops = Bind(config, "2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for plants, seeds, and crops.");
+            Group_FlowersAndCrops = Bind(config, "2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for wild plants, seeds, and crops.");
             Group_RocksAndFlint = Bind(config, "2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
-            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore veins and deposits.");
-            Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests, dungeons, portals, beehives.");
-            Group_RuinsAndLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for stone rings, abandoned farms, ruins, runestones.");
+            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, and ingots.");
+            Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests, dungeon entrances, beehives.");
+            Group_RuinsAndLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for stone rings, abandoned ruins, runestones, tar pits.");
 
-            EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the biome sections below.");
-            EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the biome sections below.");
+            EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
+            EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
             MinMonsterStars = Bind(config, "3 - Creatures (Defaults)", "Min Monster Stars (Unlisted)", 0, "Minimum star level for unlisted monsters (0 = All).", new AcceptableValueRange<int>(0, 3));
             MinAnimalStars = Bind(config, "3 - Creatures (Defaults)", "Min Animal Stars (Unlisted)", 0, "Minimum star level for unlisted animals (0 = All).", new AcceptableValueRange<int>(0, 3));
 
             Creatures.Clear();
             foreach (var def in CreatureDefinitions)
             {
-                Creatures[def.Key] = new CreatureConfigEntry
+                Creatures[def.CanonicalKey] = new CreatureConfigEntry
                 {
                     IsMonster = def.IsMonster,
                     Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}."),
-                    MinStars = Bind(config, def.Section, $"{def.DisplayName} - Min Stars", 0, $"Minimum star level for {def.DisplayName} (0 = All, requires the toggle above to also be on).", new AcceptableValueRange<int>(0, 3))
+                    MinStars = Bind(config, def.Section, $"{def.DisplayName} - Min Stars", 0, $"Minimum star level for {def.DisplayName} (0 = All, requires the toggle above to also be on). Not applicable to fish.", new AcceptableValueRange<int>(0, 3))
                 };
             }
 
-            TrackRaspberry = Bind(config, "10 - Resources (Berries)", "Raspberries", true, "Show Raspberries.");
-            TrackBlueberry = Bind(config, "10 - Resources (Berries)", "Blueberries", true, "Show Blueberries.");
-            TrackCloudberry = Bind(config, "10 - Resources (Berries)", "Cloudberries", true, "Show Cloudberries.");
+            TrackRaspberry = Bind(config, "10 - Resources (Berries)", "Raspberries", true, "Show wild Raspberry bushes.");
+            TrackBlueberry = Bind(config, "10 - Resources (Berries)", "Blueberries", true, "Show wild Blueberry bushes.");
+            TrackCloudberry = Bind(config, "10 - Resources (Berries)", "Cloudberries", true, "Show wild Cloudberry bushes.");
 
             TrackRedMushroom = Bind(config, "11 - Resources (Mushrooms)", "Red Mushrooms", true, "Show standard Red Mushrooms.");
             TrackYellowMushroom = Bind(config, "11 - Resources (Mushrooms)", "Yellow Mushrooms", true, "Show Yellow Cave Mushrooms.");
             TrackBlueMushroom = Bind(config, "11 - Resources (Mushrooms)", "Blue Mushrooms", true, "Show Blue Mushrooms.");
 
-            TrackDandelion = Bind(config, "12 - Resources (Plants & Crops)", "Dandelion", true, "Show Dandelions.");
-            TrackThistle = Bind(config, "12 - Resources (Plants & Crops)", "Thistle", true, "Show Thistle.");
-            TrackCarrotSeed = Bind(config, "12 - Resources (Plants & Crops)", "Carrot Seeds", true, "Show wild Carrot seeds.");
-            TrackTurnipSeed = Bind(config, "12 - Resources (Plants & Crops)", "Turnip Seeds", true, "Show wild Turnip seeds.");
-            TrackOnionSeed = Bind(config, "12 - Resources (Plants & Crops)", "Onion Seeds", true, "Show wild Onion seeds.");
-            TrackBarley = Bind(config, "12 - Resources (Plants & Crops)", "Barley", true, "Show wild or grown Barley.");
-            TrackFlax = Bind(config, "12 - Resources (Plants & Crops)", "Flax", true, "Show wild or grown Flax.");
-            TrackMagecap = Bind(config, "12 - Resources (Plants & Crops)", "Magecap", true, "Show Magecap mushrooms/plants.");
+            TrackDandelion = Bind(config, "12 - Resources (Plants & Crops)", "Dandelion", true, "Show wild Dandelions.");
+            TrackThistle = Bind(config, "12 - Resources (Plants & Crops)", "Thistle", true, "Show wild Thistle.");
+            TrackCarrotSeed = Bind(config, "12 - Resources (Plants & Crops)", "Carrot Seeds", true, "Show wild Carrots (never player-planted ones - those are a different, Piece-based object).");
+            TrackTurnipSeed = Bind(config, "12 - Resources (Plants & Crops)", "Turnip Seeds", true, "Show wild Turnips (never player-planted ones - those are a different, Piece-based object).");
+            TrackOnionSeed = Bind(config, "12 - Resources (Plants & Crops)", "Onion Seeds", true, "Show wild Onions (never player-planted ones - those are a different, Piece-based object).");
+            TrackBarley = Bind(config, "12 - Resources (Plants & Crops)", "Barley", true, "Show wild Barley (never player-planted ones - those are a different, Piece-based object).");
+            TrackFlax = Bind(config, "12 - Resources (Plants & Crops)", "Flax", true, "Show wild Flax (never player-planted ones - those are a different, Piece-based object).");
+            TrackMagecap = Bind(config, "12 - Resources (Plants & Crops)", "Magecap", true, "Show wild Magecap mushrooms (never player-planted ones - those are a different, Piece-based object).");
 
             TrackFlint = Bind(config, "13 - Resources (Ground)", "Flint", true, "Show loose Flint.");
             TrackStone = Bind(config, "13 - Resources (Ground)", "Stones", false, "Show loose Stones.");
-            TrackWood = Bind(config, "13 - Resources (Ground)", "Wood/Branches", false, "Show loose Wood.");
+            TrackWood = Bind(config, "13 - Resources (Ground)", "Wood/Branches", false, "Show loose Wood/Branches.");
 
-            TrackCopper = Bind(config, "14 - Resources (Ores)", "Copper", true, "Show Copper deposits.");
-            TrackTin = Bind(config, "14 - Resources (Ores)", "Tin", true, "Show Tin deposits.");
-            TrackIron = Bind(config, "14 - Resources (Ores)", "Muddy Scrap / Iron", true, "Show Iron scrap deposits.");
-            TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver veins.");
+            TrackCopper = Bind(config, "14 - Resources (Ores)", "Copper", true, "Show Copper deposits, raw ore, and ingots.");
+            TrackTin = Bind(config, "14 - Resources (Ores)", "Tin", true, "Show Tin deposits, raw ore, and ingots.");
+            TrackIron = Bind(config, "14 - Resources (Ores)", "Iron", true, "Show Iron scrap sources and ingots.");
+            TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver deposits, raw ore, and ingots.");
 
-            TrackChests = Bind(config, "15 - Structures (Functional)", "Chests & Containers", true, "Show treasure chests and storage.");
-            TrackDungeons = Bind(config, "15 - Structures (Functional)", "Dungeons / Crypts / Caves", true, "Show Dungeon and Crypt entrances.");
-            TrackPortals = Bind(config, "15 - Structures (Functional)", "Portals", true, "Show player and ruined portals.");
-            TrackBeehives = Bind(config, "15 - Structures (Functional)", "Beehives", true, "Show wild and built Beehives.");
+            TrackChests = Bind(config, "15 - Structures (Functional)", "Chests & Containers", true, "Show natural/world-spawn treasure chests (player-built chests are never tracked).");
+            TrackDungeons = Bind(config, "15 - Structures (Functional)", "Dungeons / Crypts / Caves", true, "Show dungeon-plane entrances (crypts, caves, etc.), detected by their teleport behavior rather than name.");
+            TrackBeehives = Bind(config, "15 - Structures (Functional)", "Beehives", true, "Show wild Beehives (player-built beehives are never tracked).");
 
             TrackAbandonedRuins = Bind(config, "16 - Structures (Ruins & World)", "Abandoned Farms & Ruins", true, "Show ruined houses, farmsteads, and towers.");
             TrackStoneRings = Bind(config, "16 - Structures (Ruins & World)", "Stone Rings", true, "Show burial stone circles and rock formations.");

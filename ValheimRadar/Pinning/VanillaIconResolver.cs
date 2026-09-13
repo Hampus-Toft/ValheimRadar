@@ -57,19 +57,31 @@ namespace ValheimRadar
             ["fuling"] = "TrophyGoblin",
             ["growth"] = "TrophyGrowth",
             ["seeker"] = "TrophySeeker",
-            ["seekerbrute"] = "TrophySeekerBrute",
+            ["seeker_brood"] = "TrophySeekerBrute",
             ["gjall"] = "TrophyGjall",
             ["tick"] = "TrophyTick",
             ["dvergrmage"] = "TrophyDvergr",
             ["dvergr"] = "TrophyDvergr",
             ["fenring"] = "TrophyFenring",
 
-            // Bosses (matched via the generic hostile-monster bucket, since they have no
-            // dedicated RadarConfig.CreatureDefinitions entry).
-            ["gd_king"] = "TrophyTheElder",
-            ["dragon"] = "TrophyDragonQueen",
-            ["goblinking"] = "TrophyGoblinKing",
-            ["seekerqueen"] = "TrophySeekerQueen",
+            // Bosses - now matched via their own RadarConfig.CreatureDefinitions entry (see
+            // SecBosses), keyed by the same canonical key FindCreatureOverride resolves to, so
+            // classification and icon lookup can never drift apart the way they used to (e.g.
+            // Bear's real prefab "Bjorn" not containing the substring "bear").
+            ["elder"] = "TrophyTheElder",
+            ["moder"] = "TrophyDragonQueen",
+            ["yagluth"] = "TrophyGoblinKing",
+            ["queen"] = "TrophySeekerQueen",
+            // Not verified against the sprite atlas dump (only the entries above were confirmed) -
+            // if any of these four sprite names is wrong, TryResolveIcon's null-fallback means the
+            // pin just falls back to its category default icon, not a crash.
+            ["eikthyr"] = "TrophyEikthyr",
+            ["bonemass"] = "TrophyBonemass",
+            ["fader"] = "TrophyFader",
+            ["serpent"] = "TrophySerpent",
+
+            // Charred variants (matched via the generic hostile-monster bucket, since they have no
+            // dedicated RadarConfig.CreatureDefinitions entry of their own).
             ["charred_melee"] = "TrophyCharredMelee",
             ["charred_archer"] = "TrophyCharredArcher",
             ["charred_mage"] = "TrophyCharredMage",
@@ -90,7 +102,7 @@ namespace ValheimRadar
 
             string spriteName = !string.IsNullOrEmpty(explicitSpriteName)
                 ? explicitSpriteName
-                : ResolveCreatureTrophySprite(creatureKey);
+                : GetCreatureTrophySprite(creatureKey);
 
             if (string.IsNullOrEmpty(spriteName) || GUIManager.Instance == null)
             {
@@ -111,10 +123,17 @@ namespace ValheimRadar
             return sprite != null;
         }
 
-        private static string ResolveCreatureTrophySprite(string creatureKey)
+        /// <summary>
+        /// Public so ObjectEvaluator can resolve a matched creature's/fish's trophy sprite
+        /// explicitly (see ShouldPinGameObject), mirroring how ResourceRule.VanillaIcon already
+        /// works for resources - the canonical key passed in is always the exact match
+        /// FindCreatureOverride resolved, never a guessed or re-derived string, so this can no
+        /// longer silently miss the way the old raw-cleaned-name lookup could.
+        /// </summary>
+        public static string GetCreatureTrophySprite(string canonicalKey)
         {
-            if (string.IsNullOrEmpty(creatureKey)) return null;
-            return CreatureTrophySprites.TryGetValue(creatureKey, out string spriteName) ? spriteName : null;
+            if (string.IsNullOrEmpty(canonicalKey)) return null;
+            return CreatureTrophySprites.TryGetValue(canonicalKey, out string spriteName) ? spriteName : null;
         }
     }
 }
