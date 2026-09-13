@@ -34,6 +34,10 @@ namespace ValheimRadar
             ["boar"] = "TrophyBoar",
             ["neck"] = "TrophyNeck",
             ["deer"] = "TrophyDeer",
+            // No dedicated vanilla icon exists for Greyling - reuses Greydwarf's trophy sprite as
+            // the closest visual stand-in rather than falling all the way back to the generic
+            // monster icon, per explicit request.
+            ["greyling"] = "TrophyGreydwarf",
             ["greydwarf_shaman"] = "TrophyGreydwarfShaman",
             ["greydwarf_elite"] = "TrophyGreydwarfBrute",
             ["greydwarf"] = "TrophyGreydwarf",
@@ -79,6 +83,24 @@ namespace ValheimRadar
             ["bonemass"] = "TrophyBonemass",
             ["fader"] = "TrophyFader",
             ["serpent"] = "TrophySerpent",
+            // Leviathan has no "Trophy" item (not a killable enemy) - no vanilla icon to borrow,
+            // falls back to its category default PNG.
+
+            // FISH - per-species vanilla item icons, not trophies (fish are caught, not killed for
+            // a trophy). Sprite names follow the "fishN" convention matching each FishN prefab's own
+            // $animal_fishN localization key (fish4_cave notably uses "fish4", not "fish4_cave").
+            ["fish_perch"] = "fish1",
+            ["fish_pike"] = "fish2",
+            ["fish_tuna"] = "fish3",
+            ["fish_tetra"] = "fish4",
+            ["fish_trollfish"] = "fish5",
+            ["fish_giantherring"] = "fish6",
+            ["fish_grouper"] = "fish7",
+            ["fish_coralcod"] = "fish8",
+            ["fish_anglerfish"] = "fish9",
+            ["fish_northernsalmon"] = "fish10",
+            ["fish_magmafish"] = "fish11",
+            ["fish_pufferfish"] = "fish12",
 
             // Charred variants (matched via the generic hostile-monster bucket, since they have no
             // dedicated RadarConfig.CreatureDefinitions entry of their own).

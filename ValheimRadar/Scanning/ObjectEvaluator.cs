@@ -64,6 +64,23 @@ namespace ValheimRadar
             ["mistlands_dvergrbossentrance1"] = "Infested Mines",
             ["mistlands_dvergrtownentrance1"] = "Dvergr Camp",
             ["mistlands_dvergrtownentrance2"] = "Dvergr Camp",
+            ["trollcave02"] = "Troll Cave",
+            ["bearcave"] = "Bear Cave",
+        };
+
+        // Every prefab name DungeonEntranceNames knows about, lowercased - matched directly (in
+        // addition to the Teleport+DungeonGenerator component check below) because TrollCave02 and
+        // BearCave are confirmed to carry only a Teleport component, no DungeonGenerator, so the
+        // component check alone would never catch them; and because the visible "entrance you walk
+        // up to" for some crypts may not be the same GameObject the Teleport/DungeonGenerator
+        // components actually sit on, so an exact-name match here is the reliable primary signal,
+        // with the component check kept only as a fallback net for anything not in this table.
+        private static readonly string[] KnownDungeonEntranceAliases =
+        {
+            "crypt2", "crypt3", "crypt4", "halfburried_forestcrypt", "hildir_crypt",
+            "sunkencrypt4", "mountaincave02", "hildir_cave",
+            "mistlands_dvergrbossentrance1", "mistlands_dvergrtownentrance1", "mistlands_dvergrtownentrance2",
+            "trollcave02", "bearcave",
         };
 
         // Resource/structure categories, evaluated in this order. The first rule whose group+track
@@ -123,31 +140,41 @@ namespace ValheimRadar
             // map regardless of whether Valheim's own hover text/localization cooperates - this is
             // also the fix for pins that used to show a raw, untranslated "[piece_deposit_copper]"
             // string, since the label no longer depends on hover text resolving at all.
-            new ResourceRule("CopperDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "minerock_copper", "rock4_copper", "rock4_copper_frac"), "ore.png", null, Const("Copper Deposit")),
+            new ResourceRule("CopperDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "minerock_copper", "rock4_copper", "rock4_copper_frac"), "ore.png", "copperore", Const("Copper Deposit")),
             new ResourceRule("CopperOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "copperore"), "ore.png", "copperore", Const("Copper Ore")),
             new ResourceRule("CopperIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "copper"), "ore.png", "bar_copper_stack", Const("Copper")),
 
             // Tin is a vanilla quirk: MineRock_Tin (Destructible, no MineRock component) IS the
             // deposit object itself, unlike Copper's separate MineRock_Copper vein + rock4_copper
             // surface node.
-            new ResourceRule("TinDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "minerock_tin"), "ore.png", null, Const("Tin Deposit")),
+            new ResourceRule("TinDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "minerock_tin"), "ore.png", "TinOre", Const("Tin Deposit")),
             new ResourceRule("TinOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tinore"), "ore.png", "TinOre", Const("Tin Ore")),
             new ResourceRule("TinIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tin"), "ore.png", "bar_tin_stack", Const("Tin")),
 
-            // Iron has no confirmed surface "deposit" node - the classic source is digging
-            // mudpile/mudpile2 in Sunken Crypts, which directly drops IronScrap (no separate vein
-            // object). Exact match on "iron" excludes every false-positive that broke this before
-            // (fire_pit_iron, piece_cookingstation_iron, ArmorIronChest, SwordIron, iron_grate,
-            // ...) by construction, since none of those raw names equal "iron".
-            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "ironscrap", "mudpile", "mudpile2", "pickable_bogironore"), "ore.png", "ironscrap", Const("Iron Scrap")),
+            // Iron has no confirmed surface "deposit" node in vanilla world-gen - the classic
+            // source is digging mudpile/mudpile2 in Sunken Crypts, which directly drops IronScrap
+            // (no separate vein object). Exact match on "iron" excludes every false-positive that
+            // broke this before (fire_pit_iron, piece_cookingstation_iron, ArmorIronChest,
+            // SwordIron, iron_grate, ...) by construction, since none of those raw names equal
+            // "iron". minerock_iron is a real, registered prefab (MineRock component, matching the
+            // MineRock_Copper/_Tin pattern) but unconfirmed whether vanilla world-gen ever actually
+            // places it - included defensively since a name that's never placed simply never
+            // matches, at no cost.
+            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "ironscrap", "mudpile", "mudpile2", "pickable_bogironore", "minerock_iron"), "ore.png", "ironscrap", Const("Iron Scrap")),
             new ResourceRule("IronIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "iron"), "ore.png", null, Const("Iron")),
 
-            new ResourceRule("SilverDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silvervein", "silvervein_frac", "rock3_silver", "rock3_silver_frac"), "ore.png", null, Const("Silver Deposit")),
+            new ResourceRule("SilverDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silvervein", "silvervein_frac", "rock3_silver", "rock3_silver_frac"), "ore.png", "silverore", Const("Silver Deposit")),
             new ResourceRule("SilverOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silverore"), "ore.png", "silverore", Const("Silver Ore")),
             new ResourceRule("SilverIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silver"), "ore.png", null, Const("Silver")),
 
+            // Obsidian is used directly as a mined material - no smelting step, so no separate
+            // Ore/Ingot split (confirmed no ObsidianOre/ObsidianIngot prefab exists).
+            new ResourceRule("ObsidianDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackObsidian.Value, (go, n) => IsExactAlias(n, "minerock_obsidian"), "ore.png", null, Const("Obsidian Deposit")),
+
             // FUNCTIONAL STRUCTURES
             new ResourceRule("Beehives", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBeehives.Value, (go, n) => IsExactAlias(n, "beehive"), "beehive.png", "beehive"),
+
+            new ResourceRule("Trader", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackTrader.Value, (go, n) => IsExactAlias(n, "vendor_blackforest", "bogwitch_camp"), "ruin.png", null, Const("Trader")),
 
             // Chests: exact whitelist of natural/world-spawn loot containers. Player-buildable
             // chests (piece_chest*) are structurally IDENTICAL (same Container+Piece+WearNTear
@@ -164,16 +191,19 @@ namespace ValheimRadar
                 "treasurechest_charredfortress", "treasurechest_ashland_stone", "treasurechest_deepnorth_village", "treasurechest_morkhalla", "treasurechest_memorial_buried",
                 "treasurechest_trollcave", "loot_chest_stone", "loot_chest_wood", "stonechest",
                 "shipwreck_karve_chest", "shipwreck_vikingship_chest", "crypt_skeleton_chest", "morkhalla_chestancient"
-            ), "chest.png", "chest_wood"),
+            ), "chest.png", "chest_wood", Const("Chest")),
 
-            // DUNGEON ENTRANCES - component-signature detection (every real dungeon-plane entrance
-            // in the game carries both Teleport and DungeonGenerator) rather than a name/substring
-            // guess, per the request to "look for the portal that teleports the player to the
-            // dungeon plane". Friendly names are looked up by exact prefab name; anything matching
-            // the component signature but not in DungeonEntranceNames still gets pinned, just as a
-            // generic "Dungeon Entrance" - nothing is silently dropped.
+            // DUNGEON ENTRANCES - matched primarily by exact known prefab name
+            // (KnownDungeonEntranceAliases), falling back to component-signature detection
+            // (Teleport+DungeonGenerator, present on every real dungeon-plane entrance) for anything
+            // not in that table, per the request to "look for the portal that teleports the player
+            // to the dungeon plane". The exact-name list exists because TrollCave02/BearCave are
+            // confirmed to carry only a Teleport component (no DungeonGenerator), so the component
+            // check alone would never catch them. Friendly names are looked up by exact prefab name;
+            // anything caught only by the component fallback still gets pinned, just as a generic
+            // "Dungeon Entrance" - nothing is silently dropped.
             new ResourceRule("Dungeons", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackDungeons.Value,
-                (go, n) => go.GetComponent<Teleport>() != null && go.GetComponent<DungeonGenerator>() != null,
+                (go, n) => IsExactAlias(n, KnownDungeonEntranceAliases) || (go.GetComponent<Teleport>() != null && go.GetComponent<DungeonGenerator>() != null),
                 "dungeon.png", null, n => DungeonEntranceNames.TryGetValue(n, out string label) ? label : "Dungeon Entrance"),
 
             // Player-crafted portals are deliberately NOT pinned - there is no natural equivalent
@@ -194,7 +224,37 @@ namespace ValheimRadar
                 "woodfarm1", "woodvillage1", "woodvillage2"
             ), "ruin.png"),
 
+            // TarPit1/2/3 are "Location"-type prefabs - the root object has no ZNetView of its own;
+            // only child objects (the tar CreatureSpawner/Pickable) are individually networked.
+            // These exact names match the LOCATION's own name, which may not be the name of the
+            // actual ZNetView-bearing GameObject our Physics-based scan ends up hitting - reported
+            // as still not appearing in-game despite these being the verified real location names.
+            // Left as-is pending in-game verification of what the scanner actually detects near a
+            // tar pit (if anything) - not a guessed name, so no better alias to try without that.
             new ResourceRule("TarPits", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackTarPits.Value, (go, n) => IsExactAlias(n, "tarpit1", "tarpit1_1", "tarpit2", "tarpit2_1", "tarpit3", "tarpit3_1"), "tarpit.png"),
+
+            // POINTS OF INTEREST
+            new ResourceRule("GreydwarfNest", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGreydwarfNest.Value, (go, n) => IsExactAlias(n, "spawner_greydwarfnest"), "ruin.png", null, Const("Greydwarf Nest")),
+            new ResourceRule("BodyPile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBodyPile.Value, (go, n) => IsExactAlias(n, "spawner_draugrpile"), "ruin.png", null, Const("Body Pile")),
+            new ResourceRule("BonePile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBonePile.Value, (go, n) => IsExactAlias(n, "bonepilespawner", "bonepilespawner_swamp"), "ruin.png", null, Const("Bone Pile")),
+            new ResourceRule("Guck", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", null, Const("Guck Sack")),
+            new ResourceRule("DrakeNest", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackDrakeNest.Value, (go, n) => IsExactAlias(n, "drakenest01"), "ruin.png", null, Const("Drake Nest")),
+
+            // Mistlands structures - bundled under one toggle rather than one each. No
+            // DisplayNameOverride: each has a distinct enough raw name that the existing
+            // hover-text/FormatHumanFriendlyName fallback produces a reasonable label
+            // (e.g. "Mistlands Lighthouse1 New").
+            new ResourceRule("MistlandsPOI", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackMistlandsPOI.Value, (go, n) => IsExactAlias(n,
+                "mistlands_guardtower1_new", "mistlands_guardtower2_new", "mistlands_guardtower3_new",
+                "mistlands_lighthouse1_new", "mistlands_harbour1",
+                "mistlands_excavation1", "mistlands_excavation2", "mistlands_excavation3",
+                "mistlands_giant1", "mistlands_giant2",
+                "mistlands_swords1", "mistlands_swords2", "mistlands_swords3"
+            ), "ruin.png"),
+
+            // Purely decorative, no gameplay function - pinnable but off by default per explicit
+            // request, since most players will want these toggled off.
+            new ResourceRule("DecorativeStatues", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackDecorativeStatues.Value, (go, n) => IsExactAlias(n, "mistlands_statue1", "mistlands_statue2", "mistlands_statuegroup1"), "ruin.png", null, Const("Statue")),
         };
 
         // Destruction-fragment/debris pieces (e.g. a boss arena's stone pillars shattering apart on
@@ -301,16 +361,42 @@ namespace ValheimRadar
             }
 
             // FISH - Fish prefabs have no Character/Humanoid component at all (just Fish+ItemDrop),
-            // so they never reach the branch above. Matched via the same exact-alias AliasLookup as
-            // regular creatures, gated by the same Group_Creatures toggle. No star-level concept for
-            // fish (they don't have Character.GetLevel()).
+            // so they never reach the branch above - critically, they also have no HoverText/
+            // Character.GetHoverName() to fall back on, so the generic displayName fallback further
+            // up (go.name -> FormatHumanFriendlyName) produces the raw prefab name ("Fish1", "Fish2",
+            // ...) rather than a real species name. Matched via the same exact-alias AliasLookup as
+            // regular creatures, gated by the same Group_Creatures toggle, but the label always comes
+            // from the matched CreatureDefinition's own DisplayName ("Perch", "Pike", ...) instead of
+            // anything formatted from the raw name. No star-level concept for fish (they don't have
+            // Character.GetLevel()).
             if (character == null && RadarConfig.Group_Creatures.Value && go.GetComponent<Fish>() != null)
             {
-                RadarConfig.CreatureConfigEntry fishEntry = FindCreatureOverride(nameLower, out string fishKey);
-                if (fishEntry != null && fishEntry.Enabled.Value)
+                if (!string.IsNullOrEmpty(nameLower) && RadarConfig.AliasLookup.TryGetValue(nameLower, out var fishDef) &&
+                    RadarConfig.Creatures.TryGetValue(fishDef.CanonicalKey, out var fishEntry) && fishEntry.Enabled.Value)
                 {
-                    icon = PinManager.ResolvePerObjectPin(nameLower, "animal.png", VanillaIconResolver.GetCreatureTrophySprite(fishKey));
-                    categoryKey = $"creature:{fishKey}";
+                    displayName = fishDef.DisplayName;
+                    icon = PinManager.ResolvePerObjectPin(nameLower, "animal.png", VanillaIconResolver.GetCreatureTrophySprite(fishDef.CanonicalKey));
+                    categoryKey = $"creature:{fishDef.CanonicalKey}";
+                    return true;
+                }
+
+                return false;
+            }
+
+            // LEVIATHAN - the giant ocean turtle-shell structure players commonly call a "kraken"
+            // (Valheim has no creature literally named that). Not a Character (no AI, not directly
+            // attackable) and not a Fish - it carries its own "Leviathan" + MineRock components, so
+            // it needs its own branch. Treated as transient like a creature (re-scanned each tick,
+            // never persisted to disk) since it slowly swims/dives rather than staying fixed in
+            // place like a real resource deposit.
+            if (character == null && RadarConfig.Group_Creatures.Value && go.GetComponent<Leviathan>() != null)
+            {
+                if (!string.IsNullOrEmpty(nameLower) && RadarConfig.AliasLookup.TryGetValue(nameLower, out var leviathanDef) &&
+                    RadarConfig.Creatures.TryGetValue(leviathanDef.CanonicalKey, out var leviathanEntry) && leviathanEntry.Enabled.Value)
+                {
+                    displayName = leviathanDef.DisplayName;
+                    icon = PinManager.ResolvePerObjectPin(nameLower, "animal.png", VanillaIconResolver.GetCreatureTrophySprite(leviathanDef.CanonicalKey));
+                    categoryKey = $"creature:{leviathanDef.CanonicalKey}";
                     return true;
                 }
 

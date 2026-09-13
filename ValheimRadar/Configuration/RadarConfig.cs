@@ -92,14 +92,19 @@ namespace ValheimRadar
             // excluded - it's not a live creature to pin.
             new CreatureDefinition("bear", new[] { "bjorn", "bjorn_sleeping", "bjorn_spiritcaller" }, "Bear", SecMountain, isMonster: false),
             new CreatureDefinition("stonegolem", new[] { "stonegolem" }, "Stone Golem", SecMountain, isMonster: true),
-            new CreatureDefinition("drake", new[] { "drake" }, "Drake", SecMountain, isMonster: true),
+            // Real prefab is "Hatchling" (loca $enemy_drake -> "Drake") - "drake" itself is not a
+            // real prefab name at all, which is why it never matched in-game.
+            new CreatureDefinition("drake", new[] { "hatchling" }, "Drake", SecMountain, isMonster: true),
 
             // PLAINS
             new CreatureDefinition("lox", new[] { "lox", "lox_calf" }, "Lox", SecPlains, isMonster: false),
             new CreatureDefinition("deathsquito", new[] { "deathsquito" }, "Deathsquito", SecPlains, isMonster: true),
-            new CreatureDefinition("fuling", new[] { "fuling" }, "Fuling", SecPlains, isMonster: true),
-            new CreatureDefinition("fuling_berserker", new[] { "fuling_berserker" }, "Fuling Berserker", SecPlains, isMonster: true),
-            new CreatureDefinition("fuling_shaman", new[] { "fuling_shaman" }, "Fuling Shaman", SecPlains, isMonster: true),
+            // Real prefabs use "Goblin*" naming (loca resolves to "Fuling*") - "fuling"/
+            // "fuling_berserker"/"fuling_shaman" are not real prefab names, which is why none of
+            // these ever matched in-game. GoblinArcher shares the base Fuling's in-game name/icon.
+            new CreatureDefinition("fuling", new[] { "goblin", "goblinarcher" }, "Fuling", SecPlains, isMonster: true),
+            new CreatureDefinition("fuling_berserker", new[] { "goblinbrute" }, "Fuling Berserker", SecPlains, isMonster: true),
+            new CreatureDefinition("fuling_shaman", new[] { "goblinshaman" }, "Fuling Shaman", SecPlains, isMonster: true),
             new CreatureDefinition("growth", new[] { "growth" }, "Growth (Lox Spawn)", SecPlains, isMonster: true),
 
             // MISTLANDS
@@ -123,6 +128,11 @@ namespace ValheimRadar
             new CreatureDefinition("queen", new[] { "seekerqueen" }, "The Queen", SecBosses, isMonster: true),
             new CreatureDefinition("fader", new[] { "fader" }, "Fader", SecBosses, isMonster: true),
             new CreatureDefinition("serpent", new[] { "serpent" }, "Sea Serpent", SecBosses, isMonster: true),
+            // Not a Character/Humanoid (no AI, not directly attackable) - a MineRock-based ocean
+            // structure. What players commonly call a "kraken" is this - Valheim has no creature
+            // literally named Kraken. Matched via its own component branch in ObjectEvaluator
+            // (mirrors the Fish branch), since it has neither Character nor Fish components.
+            new CreatureDefinition("leviathan", new[] { "leviathan", "leviathanlava" }, "Leviathan", SecBosses, isMonster: false),
 
             // FISH - Fish prefabs (Fish1..Fish12) have no Character/Humanoid component at all,
             // just Fish+ItemDrop, so they never went through ShouldPinGameObject's Character-based
@@ -178,6 +188,7 @@ namespace ValheimRadar
         public static ConfigEntry<bool> Group_Ores;
         public static ConfigEntry<bool> Group_FunctionalStructures;
         public static ConfigEntry<bool> Group_RuinsAndLocations;
+        public static ConfigEntry<bool> Group_PointsOfInterest;
 
         // Creature Filters (fallback used for any creature without a specific entry above)
         public static ConfigEntry<bool> EnableMonsters;
@@ -215,17 +226,30 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackTin;
         public static ConfigEntry<bool> TrackIron;
         public static ConfigEntry<bool> TrackSilver;
+        public static ConfigEntry<bool> TrackObsidian;
 
         // Functional Structures
         public static ConfigEntry<bool> TrackChests;
         public static ConfigEntry<bool> TrackDungeons;
         public static ConfigEntry<bool> TrackBeehives;
+        public static ConfigEntry<bool> TrackTrader;
 
         // Ruins & Locations
         public static ConfigEntry<bool> TrackAbandonedRuins;
         public static ConfigEntry<bool> TrackStoneRings;
         public static ConfigEntry<bool> TrackRunestones;
         public static ConfigEntry<bool> TrackTarPits;
+
+        // Points of Interest (monster spawners, harvestable landmarks, and biome-specific
+        // structures - split from "Ruins & Locations" since it's a newer, separately-toggleable
+        // batch of additions)
+        public static ConfigEntry<bool> TrackGreydwarfNest;
+        public static ConfigEntry<bool> TrackBodyPile;
+        public static ConfigEntry<bool> TrackBonePile;
+        public static ConfigEntry<bool> TrackGuck;
+        public static ConfigEntry<bool> TrackDrakeNest;
+        public static ConfigEntry<bool> TrackMistlandsPOI;
+        public static ConfigEntry<bool> TrackDecorativeStatues;
 
         private static int _order;
 
@@ -252,6 +276,7 @@ namespace ValheimRadar
             Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, and ingots.");
             Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests, dungeon entrances, beehives.");
             Group_RuinsAndLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for stone rings, abandoned ruins, runestones, tar pits.");
+            Group_PointsOfInterest = Bind(config, "2 - Master Groups", "Enable Points of Interest", true, "Master toggle for monster spawners, harvestable landmarks, traders, and biome-specific structures.");
 
             EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
             EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
@@ -294,15 +319,25 @@ namespace ValheimRadar
             TrackTin = Bind(config, "14 - Resources (Ores)", "Tin", true, "Show Tin deposits, raw ore, and ingots.");
             TrackIron = Bind(config, "14 - Resources (Ores)", "Iron", true, "Show Iron scrap sources and ingots.");
             TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver deposits, raw ore, and ingots.");
+            TrackObsidian = Bind(config, "14 - Resources (Ores)", "Obsidian", true, "Show Obsidian deposits.");
 
             TrackChests = Bind(config, "15 - Structures (Functional)", "Chests & Containers", true, "Show natural/world-spawn treasure chests (player-built chests are never tracked).");
             TrackDungeons = Bind(config, "15 - Structures (Functional)", "Dungeons / Crypts / Caves", true, "Show dungeon-plane entrances (crypts, caves, etc.), detected by their teleport behavior rather than name.");
             TrackBeehives = Bind(config, "15 - Structures (Functional)", "Beehives", true, "Show wild Beehives (player-built beehives are never tracked).");
+            TrackTrader = Bind(config, "15 - Structures (Functional)", "Traders", true, "Show Haldor and the Bog Witch's camp.");
 
             TrackAbandonedRuins = Bind(config, "16 - Structures (Ruins & World)", "Abandoned Farms & Ruins", true, "Show ruined houses, farmsteads, and towers.");
             TrackStoneRings = Bind(config, "16 - Structures (Ruins & World)", "Stone Rings", true, "Show burial stone circles and rock formations.");
             TrackRunestones = Bind(config, "16 - Structures (Ruins & World)", "Runestones", true, "Show lore and vegvisir runestones.");
-            TrackTarPits = Bind(config, "16 - Structures (Ruins & World)", "Tar Pits", true, "Show Plains tar pits.");
+            TrackTarPits = Bind(config, "16 - Structures (Ruins & World)", "Tar Pits", true, "Show Plains tar pits. NOTE: reports suggest these may not currently be detectable at all - see ObjectEvaluator's TarPits rule comment.");
+
+            TrackGreydwarfNest = Bind(config, "17 - Points of Interest", "Greydwarf Nest", true, "Show Greydwarf Nests (Black Forest monster spawner).");
+            TrackBodyPile = Bind(config, "17 - Points of Interest", "Body Pile", true, "Show Body Piles (Swamp Draugr spawner).");
+            TrackBonePile = Bind(config, "17 - Points of Interest", "Bone Pile", true, "Show Bone Piles (Swamp Skeleton spawner).");
+            TrackGuck = Bind(config, "17 - Points of Interest", "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
+            TrackDrakeNest = Bind(config, "17 - Points of Interest", "Drake Nest", true, "Show Drake Nests (Mountain).");
+            TrackMistlandsPOI = Bind(config, "17 - Points of Interest", "Mistlands Structures", true, "Show Dvergr guard towers, lighthouses, harbours, excavation sites, giant remains, and ancient sword markers.");
+            TrackDecorativeStatues = Bind(config, "17 - Points of Interest", "Decorative Statues", false, "Show purely decorative Mistlands statues (no function - off by default).");
         }
     }
 }

@@ -136,6 +136,27 @@ namespace ValheimRadar.Tests.Scanning
         }
 
         [Fact]
+        public void OreDeposits_ReuseTheirMetalsOreIcon()
+        {
+            // Deposits (the uncollected world vein/node) reuse their metal's raw-ore vanilla icon
+            // rather than falling back to no vanilla icon at all - there's no separate confirmed
+            // "deposit" sprite, but a distinct icon still beats the built-in default.
+            Assert.Equal("copperore", ObjectEvaluator.GetVanillaIconForCategory("resource:CopperDeposit"));
+            Assert.Equal("TinOre", ObjectEvaluator.GetVanillaIconForCategory("resource:TinDeposit"));
+            Assert.Equal("silverore", ObjectEvaluator.GetVanillaIconForCategory("resource:SilverDeposit"));
+        }
+
+        [Fact]
+        public void NewPointsOfInterestRules_AreRegisteredWithExpectedIcons()
+        {
+            Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:ObsidianDeposit"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:GreydwarfNest"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:BodyPile"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:Guck"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:Trader"));
+        }
+
+        [Fact]
         public void FormatHumanFriendlyName_StripsPrefixesCloneSuffixAndTitleCases()
         {
             Assert.Equal("Red Mushroom", ObjectEvaluator.FormatHumanFriendlyName("pickable_RedMushroom(Clone)"));
@@ -210,6 +231,41 @@ namespace ValheimRadar.Tests.Scanning
             var entry = ObjectEvaluator.FindCreatureOverride("fish1", out string matchedKey);
 
             Assert.Equal("fish_perch", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Drake_ResolvesViaRealHatchlingPrefab()
+        {
+            // "drake" is not a real prefab name at all - the real prefab is "Hatchling" (loca
+            // resolves to "Drake"), which is why nothing matched in-game before this fix.
+            var entry = ObjectEvaluator.FindCreatureOverride("hatchling", out string matchedKey);
+
+            Assert.Equal("drake", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Theory]
+        [InlineData("goblin", "fuling")]
+        [InlineData("goblinarcher", "fuling")]
+        [InlineData("goblinbrute", "fuling_berserker")]
+        [InlineData("goblinshaman", "fuling_shaman")]
+        public void FindCreatureOverride_Fuling_ResolvesViaRealGoblinPrefabs(string prefabName, string expectedCanonicalKey)
+        {
+            // "fuling"/"fuling_berserker"/"fuling_shaman" are not real prefab names - the real
+            // prefabs use "Goblin*" naming, which is why none of these matched in-game before.
+            var entry = ObjectEvaluator.FindCreatureOverride(prefabName, out string matchedKey);
+
+            Assert.Equal(expectedCanonicalKey, matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Leviathan_ResolvesLikeAnyOtherAlias()
+        {
+            var entry = ObjectEvaluator.FindCreatureOverride("leviathan", out string matchedKey);
+
+            Assert.Equal("leviathan", matchedKey);
             Assert.NotNull(entry);
         }
 

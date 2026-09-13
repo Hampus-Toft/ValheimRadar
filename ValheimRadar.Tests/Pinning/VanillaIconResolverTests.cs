@@ -8,14 +8,14 @@ namespace ValheimRadar.Tests.Pinning
     public class VanillaIconResolverTests
     {
         [Fact]
-        public void GetCreatureTrophySprite_Greyling_ReturnsNullAndFallsBackGracefully()
+        public void GetCreatureTrophySprite_Greyling_ReusesGreydwarfIcon()
         {
-            // No dedicated Greyling icon exists in the vanilla atlas - classification must still
-            // succeed (that's the actual "never gets a pin" half of the original bug report); only
-            // the vanilla-icon lookup is expected to come back empty, falling back to the category
-            // default PNG / built-in fallback icon (see PinManager.ResolvePerObjectPin).
+            // No dedicated Greyling icon exists in the vanilla atlas - classification succeeds
+            // regardless (that was the actual "never gets a pin" half of the original bug report),
+            // and the icon deliberately reuses Greydwarf's trophy sprite as the closest visual
+            // stand-in rather than falling all the way back to the generic monster icon.
             Assert.True(RadarConfig.AliasLookup.ContainsKey("greyling"));
-            Assert.Null(VanillaIconResolver.GetCreatureTrophySprite("greyling"));
+            Assert.Equal("TrophyGreydwarf", VanillaIconResolver.GetCreatureTrophySprite("greyling"));
         }
 
         [Fact]
@@ -33,13 +33,14 @@ namespace ValheimRadar.Tests.Pinning
         }
 
         [Fact]
-        public void GetCreatureTrophySprite_Fish_ReturnsNullAndFallsBackGracefully()
+        public void GetCreatureTrophySprite_Fish_ResolvesToPerSpeciesItemIcon()
         {
-            // Fish are ItemDrop-based, not Character trophies - no entry is expected for any of
-            // them, and that's by design, not a bug (see ObjectEvaluator's Fish branch, which
-            // always falls back to "animal.png" for fish).
+            // Fish are ItemDrop-based, not Character trophies, so they're mapped to their own
+            // per-species vanilla item icon (sprite names "fish1".."fish12") rather than a "Trophy*"
+            // sprite - see ObjectEvaluator's Fish branch.
             Assert.True(RadarConfig.AliasLookup.ContainsKey("fish1"));
-            Assert.Null(VanillaIconResolver.GetCreatureTrophySprite("fish_perch"));
+            Assert.Equal("fish1", VanillaIconResolver.GetCreatureTrophySprite("fish_perch"));
+            Assert.Equal("fish12", VanillaIconResolver.GetCreatureTrophySprite("fish_pufferfish"));
         }
     }
 }
