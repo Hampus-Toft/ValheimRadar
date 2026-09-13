@@ -18,6 +18,7 @@ namespace ValheimRadar
         private const float PersistSaveInterval = 30f;
 
         private float timer = 0f;
+        private float locationTimer = 0f;
         private float saveTimer = 0f;
         private bool wasActive = false;
         private string currentWorldName;
@@ -35,8 +36,10 @@ namespace ValheimRadar
         {
             Config.SettingChanged -= OnConfigurationChanged;
             PinManager.SaveWorldPins(currentWorldName);
+            PinManager.SaveLocationPins(currentWorldName);
             PinManager.ClearAllPins();
             BatchScanner.Reset();
+            LocationScanner.Reset();
         }
 
         private void OnConfigurationChanged(object sender, EventArgs e)
@@ -62,8 +65,10 @@ namespace ValheimRadar
                 if (wasActive)
                 {
                     PinManager.SaveWorldPins(currentWorldName);
+                    PinManager.SaveLocationPins(currentWorldName);
                     PinManager.ClearAllPins();
                     BatchScanner.Reset();
+                    LocationScanner.Reset();
                     wasActive = false;
                     currentWorldName = null;
                     saveTimer = 0f;
@@ -83,20 +88,32 @@ namespace ValheimRadar
                 PinManager.LoadWorldPins(currentWorldName);
                 PinManager.RebuildPersistentClusters(ClusterDistance);
                 PinManager.SyncPersistentClusters(Minimap.instance);
+                PinManager.LoadLocationPins(currentWorldName);
+                PinManager.DrawLoadedLocationPins(Minimap.instance);
                 wasActive = true;
             }
 
             timer += Time.deltaTime;
-            if (timer < RadarConfig.UpdateInterval.Value) return;
-            timer = 0f;
+            if (timer >= RadarConfig.UpdateInterval.Value)
+            {
+                timer = 0f;
+                ScanAndPinObjects(Minimap.instance);
+            }
 
-            ScanAndPinObjects(Minimap.instance);
+            locationTimer += Time.deltaTime;
+            if (locationTimer >= RadarConfig.LocationScanInterval.Value)
+            {
+                locationTimer = 0f;
+                List<TrackedLocation> newLocations = LocationScanner.ScanLocations();
+                if (newLocations.Count > 0) PinManager.RecordAndSyncLocations(Minimap.instance, newLocations);
+            }
 
             saveTimer += Time.deltaTime;
             if (saveTimer >= PersistSaveInterval)
             {
                 saveTimer = 0f;
                 PinManager.SaveWorldPins(currentWorldName);
+                PinManager.SaveLocationPins(currentWorldName);
             }
         }
 
