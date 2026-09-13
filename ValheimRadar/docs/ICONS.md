@@ -30,10 +30,16 @@ one that produces a result:
 4. **Built-in fallback** - the vanilla `Minimap.PinType.Icon3` pin's own
    default sprite, if nothing above resolved.
 
-Structures (chests, portals, dungeons/crypts, beehives, stone rings, ruins,
+Structures (chests, dungeon entrances, beehives, stone rings, ruins,
 runestones, tar pits) don't have a vanilla pickup icon to borrow, so step 3 is
 a no-op for them today - they rely on steps 1/2/4. Drop a PNG for these if you
-want them visually distinct from their category default.
+want them visually distinct from their category default. Chests and beehives
+only ever match natural/world-spawn prefabs (see `ObjectEvaluator.ResourceRules`)
+- player-built chests and portals are never tracked, since there's no reliable
+way to distinguish some of them from their natural counterparts by component
+type alone (a natural loot chest and a player-built one share an identical
+Container+Piece+WearNTear signature), so naming is the only signal and player
+variants are simply excluded from the whitelist entirely.
 
 ## Naming key
 

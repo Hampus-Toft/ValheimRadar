@@ -121,6 +121,42 @@ namespace ValheimRadar.Tests.Scanning
         }
 
         [Fact]
+        public void CopperOreAndIngot_AreDistinctRulesWithDistinctVerifiedIcons()
+        {
+            // The bug this whitelist rewrite exists to fix: ore and ingot used to be one
+            // conflated "resource:Copper" rule/pin. They are now two distinct rule ids with
+            // distinct verified vanilla icons.
+            Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:CopperOre"));
+            Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:CopperIngot"));
+            Assert.Equal("copperore", ObjectEvaluator.GetVanillaIconForCategory("resource:CopperOre"));
+            Assert.Equal("bar_copper_stack", ObjectEvaluator.GetVanillaIconForCategory("resource:CopperIngot"));
+
+            // The old conflated id no longer exists.
+            Assert.Null(ObjectEvaluator.GetDefaultIconForCategory("resource:Copper"));
+        }
+
+        [Fact]
+        public void OreDeposits_ReuseTheirMetalsOreIcon()
+        {
+            // Deposits (the uncollected world vein/node) reuse their metal's raw-ore vanilla icon
+            // rather than falling back to no vanilla icon at all - there's no separate confirmed
+            // "deposit" sprite, but a distinct icon still beats the built-in default.
+            Assert.Equal("copperore", ObjectEvaluator.GetVanillaIconForCategory("resource:CopperDeposit"));
+            Assert.Equal("TinOre", ObjectEvaluator.GetVanillaIconForCategory("resource:TinDeposit"));
+            Assert.Equal("silverore", ObjectEvaluator.GetVanillaIconForCategory("resource:SilverDeposit"));
+        }
+
+        [Fact]
+        public void NewPointsOfInterestRules_AreRegisteredWithExpectedIcons()
+        {
+            Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:ObsidianDeposit"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:GreydwarfNest"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:BodyPile"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:Guck"));
+            Assert.Equal("ruin.png", ObjectEvaluator.GetDefaultIconForCategory("resource:Trader"));
+        }
+
+        [Fact]
         public void FormatHumanFriendlyName_StripsPrefixesCloneSuffixAndTitleCases()
         {
             Assert.Equal("Red Mushroom", ObjectEvaluator.FormatHumanFriendlyName("pickable_RedMushroom(Clone)"));
@@ -142,14 +178,40 @@ namespace ValheimRadar.Tests.Scanning
         }
 
         [Fact]
-        public void FindCreatureOverride_MatchesMostSpecificKeyFirst()
+        public void FindCreatureOverride_RealPrefabAliasMatchesCanonicalSpeciesKey()
         {
-            // "greydwarf_elite" must win over the shorter "greydwarf" entry it overlaps with - see
-            // the ordering comment on RadarConfig.CreatureDefinitions.
+            // Bear's real prefab is "Bjorn" - under the old Contains("bear") substring check this
+            // never matched at all, so Bear silently failed classification (and therefore its
+            // icon) entirely. This is the concrete bug this whitelist rewrite fixes.
+            var entry = ObjectEvaluator.FindCreatureOverride("bjorn", out string matchedKey);
+
+            Assert.Equal("bear", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_ExactCleanKey_ResolvesCorrectCanonicalEntry()
+        {
+            var elite = ObjectEvaluator.FindCreatureOverride("greydwarf_elite", out string eliteKey);
+            Assert.Equal("greydwarf_elite", eliteKey);
+            Assert.NotNull(elite);
+
+            var basic = ObjectEvaluator.FindCreatureOverride("greydwarf", out string basicKey);
+            Assert.Equal("greydwarf", basicKey);
+            Assert.NotNull(basic);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_PartialSubstringNoLongerMatches()
+        {
+            // Exact-alias semantics: a string that merely CONTAINS a real alias must not match -
+            // this is the deliberate behavior change from the old Contains()-based lookup (see
+            // RadarConfig.CreatureDefinitions - declaration order no longer matters either, since
+            // there's no more "greydwarf_elite before greydwarf" ordering requirement).
             var entry = ObjectEvaluator.FindCreatureOverride("greydwarf_elite_attack", out string matchedKey);
 
-            Assert.Equal("greydwarf_elite", matchedKey);
-            Assert.NotNull(entry);
+            Assert.Null(entry);
+            Assert.Null(matchedKey);
         }
 
         [Fact]
@@ -159,6 +221,63 @@ namespace ValheimRadar.Tests.Scanning
 
             Assert.Null(entry);
             Assert.Null(matchedKey);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Fish_ResolvesLikeAnyOtherAlias()
+        {
+            // Fish share the same AliasLookup/Creatures dictionary as Character-based creatures -
+            // see ObjectEvaluator's dedicated Fish-component branch in ShouldPinGameObject.
+            var entry = ObjectEvaluator.FindCreatureOverride("fish1", out string matchedKey);
+
+            Assert.Equal("fish_perch", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Drake_ResolvesViaRealHatchlingPrefab()
+        {
+            // "drake" is not a real prefab name at all - the real prefab is "Hatchling" (loca
+            // resolves to "Drake"), which is why nothing matched in-game before this fix.
+            var entry = ObjectEvaluator.FindCreatureOverride("hatchling", out string matchedKey);
+
+            Assert.Equal("drake", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Theory]
+        [InlineData("goblin", "fuling")]
+        [InlineData("goblinarcher", "fuling")]
+        [InlineData("goblinbrute", "fuling_berserker")]
+        [InlineData("goblinshaman", "fuling_shaman")]
+        public void FindCreatureOverride_Fuling_ResolvesViaRealGoblinPrefabs(string prefabName, string expectedCanonicalKey)
+        {
+            // "fuling"/"fuling_berserker"/"fuling_shaman" are not real prefab names - the real
+            // prefabs use "Goblin*" naming, which is why none of these matched in-game before.
+            var entry = ObjectEvaluator.FindCreatureOverride(prefabName, out string matchedKey);
+
+            Assert.Equal(expectedCanonicalKey, matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Leviathan_ResolvesLikeAnyOtherAlias()
+        {
+            var entry = ObjectEvaluator.FindCreatureOverride("leviathan", out string matchedKey);
+
+            Assert.Equal("leviathan", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Boss_ResolvesToOwnCanonicalKey()
+        {
+            // Bosses previously had no RadarConfig.CreatureDefinitions entry at all and were only
+            // ever reachable via the generic hostile-monster fallback.
+            var entry = ObjectEvaluator.FindCreatureOverride("bonemass", out string matchedKey);
+
+            Assert.Equal("bonemass", matchedKey);
+            Assert.NotNull(entry);
         }
     }
 }

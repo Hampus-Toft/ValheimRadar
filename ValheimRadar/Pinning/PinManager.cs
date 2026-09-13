@@ -424,6 +424,14 @@ namespace ValheimRadar
         private static void LogPinRemoved(string clusterKey, string reason) =>
             Debug.Log($"[ValheimRadar] pin-removed key={clusterKey} reason={reason}");
 
+        // Bumped whenever the on-disk pin save format changes shape in a way that needs explicit
+        // migration/validation on load (see MigrateLegacyLine below), rather than just "new optional
+        // field". Written as line 0 of the save file; a file with no version line at all (or an
+        // unparseable one) is treated as PreVersioning (0) - the pipe-delimited format shipped before
+        // this field existed.
+        private const int SaveFormatVersion = 2;
+        private const int PreVersioningFormat = 0;
+
         // Only stationary resource/structure points are written to disk - creature positions are
         // transient by nature (they move or die) and would just go stale, so they're re-discovered by
         // scanning each session instead of being persisted.
@@ -436,7 +444,7 @@ namespace ValheimRadar
         {
             if (!rawPointsDirty || string.IsNullOrEmpty(worldName)) return;
 
-            List<string> lines = new List<string>();
+            List<string> lines = new List<string> { $"#v{SaveFormatVersion}" };
             foreach (var item in rawPersistentPoints.Values)
             {
                 lines.Add(string.Join("|",
@@ -468,6 +476,16 @@ namespace ValheimRadar
         // is expected to follow up with RebuildPersistentClusters + SyncPersistentClusters so loaded
         // points are drawn through the exact same path a live scan uses, instead of a separate one
         // that could drift out of sync with it (e.g. after a ClusterDistance change).
+        //
+        // Handles migrating a save file written before this whitelist rewrite (categoryKey values
+        // like "resource:Copper"/"resource:Portals" that no longer exist as ResourceRule ids - see
+        // ObjectEvaluator's ResourceRules, whose ids were split/renamed/removed in that change).
+        // MigrateLegacyLine re-maps every old categoryKey it can (e.g. a pre-split "resource:Copper"
+        // point becomes "resource:CopperIngot", since that's what a raw prefab literally named
+        // "Copper" - the ingot - would classify as today) and drops (with a one-line log summary, not
+        // per-point spam) anything it can't - most notably every "resource:Portals" point, since
+        // player-built portals are no longer tracked at all. A file already on the current format is
+        // passed through unchanged.
         public static void LoadWorldPins(string worldName)
         {
             rawPersistentPoints.Clear();
@@ -494,11 +512,25 @@ namespace ValheimRadar
             // dropped by mistake - but nothing is lost: the next real scan near it just re-adds it, the
             // same as any other not-yet-(re)scanned ground.
             bool droppedDuplicate = false;
+            int migratedCount = 0;
+            int unmigratableCount = 0;
 
             try
             {
-                foreach (string line in File.ReadAllLines(path))
+                string[] allLines = File.ReadAllLines(path);
+                int fileFormatVersion = PreVersioningFormat;
+                int startIndex = 0;
+
+                if (allLines.Length > 0 && allLines[0].StartsWith("#v", StringComparison.Ordinal) &&
+                    int.TryParse(allLines[0].Substring(2), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsedVersion))
                 {
+                    fileFormatVersion = parsedVersion;
+                    startIndex = 1;
+                }
+
+                for (int i = startIndex; i < allLines.Length; i++)
+                {
+                    string line = allLines[i];
                     if (string.IsNullOrEmpty(line)) continue;
 
                     string[] parts = line.Split('|');
@@ -515,6 +547,17 @@ namespace ValheimRadar
                     string categoryKey = Unescape(parts[7]);
 
                     if (string.IsNullOrEmpty(displayName)) continue;
+
+                    if (fileFormatVersion < SaveFormatVersion)
+                    {
+                        if (!MigrateLegacyCategoryKey(categoryKey, rawName, out categoryKey))
+                        {
+                            unmigratableCount++;
+                            continue;
+                        }
+
+                        migratedCount++;
+                    }
 
                     ZDOID zdoid = new ZDOID(userId, id);
                     string key = RawPointKey(zdoid);
@@ -550,11 +593,81 @@ namespace ValheimRadar
                     rawPersistentPoints[key] = candidate;
                 }
 
-                rawPointsDirty = droppedDuplicate;
+                rawPointsDirty = droppedDuplicate || migratedCount > 0 || unmigratableCount > 0;
+
+                if (migratedCount > 0 || unmigratableCount > 0)
+                {
+                    Debug.Log($"[ValheimRadar] pin-save-migrated fromVersion={fileFormatVersion} migrated={migratedCount} dropped={unmigratableCount}");
+                }
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[ValheimRadar] Failed to load persisted pins: {ex.Message}");
+            }
+        }
+
+        // Re-maps a categoryKey from a save file written before the exact-prefab-whitelist rewrite
+        // (see ObjectEvaluator.ResourceRules) onto its current equivalent, using the point's own
+        // RawName as the tie-breaker wherever an old id fanned out into several new ones. Returns
+        // false for anything with no sensible current equivalent (that point is dropped, not carried
+        // forward as a stale/incorrect pin) - most notably every old "resource:Portals" point, since
+        // player-built portals are no longer tracked at all, and "resource:Dungeons" (dungeon
+        // detection changed from name-substring to component-signature, which can't be re-derived
+        // from a saved RawName string alone without the live GameObject).
+        private static bool MigrateLegacyCategoryKey(string oldCategoryKey, string rawName, out string newCategoryKey)
+        {
+            newCategoryKey = oldCategoryKey;
+
+            if (string.IsNullOrEmpty(oldCategoryKey) || !oldCategoryKey.StartsWith("resource:", StringComparison.Ordinal))
+            {
+                // Creature keys ("creature:*") and anything already on the current resource id scheme
+                // pass through unchanged - CreatureDefinitions gained entries (bosses/fish) but never
+                // removed/renamed any existing canonical key, so no creature key can go stale here.
+                return true;
+            }
+
+            string oldId = oldCategoryKey.Substring("resource:".Length);
+            string cleanRaw = string.IsNullOrEmpty(rawName) ? string.Empty : rawName.ToLowerInvariant();
+
+            switch (oldId)
+            {
+                // Each old single-bucket ore id fanned out into Deposit/Ore/Ingot - use the saved raw
+                // prefab name (still exact from before this rewrite) to pick the right one.
+                case "Copper":
+                    if (cleanRaw == "copperore") { newCategoryKey = "resource:CopperOre"; return true; }
+                    if (cleanRaw == "minerock_copper" || cleanRaw == "rock4_copper" || cleanRaw == "rock4_copper_frac") { newCategoryKey = "resource:CopperDeposit"; return true; }
+                    newCategoryKey = "resource:CopperIngot"; // default: old rule's own VanillaIcon was "copperore", but "Copper" (the ingot) was the most common real match
+                    return true;
+                case "Tin":
+                    if (cleanRaw == "tinore") { newCategoryKey = "resource:TinOre"; return true; }
+                    if (cleanRaw == "minerock_tin") { newCategoryKey = "resource:TinDeposit"; return true; }
+                    newCategoryKey = "resource:TinIngot";
+                    return true;
+                case "Iron":
+                    if (cleanRaw == "ironscrap" || cleanRaw == "mudpile" || cleanRaw == "mudpile2") { newCategoryKey = "resource:IronScrap"; return true; }
+                    newCategoryKey = "resource:IronIngot";
+                    return true;
+                case "Silver":
+                    if (cleanRaw == "silverore") { newCategoryKey = "resource:SilverOre"; return true; }
+                    if (cleanRaw == "silvervein" || cleanRaw == "silvervein_frac" || cleanRaw == "rock3_silver" || cleanRaw == "rock3_silver_frac") { newCategoryKey = "resource:SilverDeposit"; return true; }
+                    newCategoryKey = "resource:SilverIngot";
+                    return true;
+
+                // No natural equivalent exists - these points can't be carried forward.
+                case "Portals":
+                    return false;
+
+                // Dungeon detection is now component-signature based (Teleport+DungeonGenerator),
+                // which can't be re-derived from a saved RawName string without the live GameObject -
+                // drop the stale point; a fresh scan of the same entrance re-adds it correctly.
+                case "Dungeons":
+                    return false;
+
+                default:
+                    // Every other id (berries, mushrooms, crops, ground pickables, chests, beehives,
+                    // runestones, stone rings, abandoned ruins, tar pits) kept its old id unchanged -
+                    // pass through as-is.
+                    return true;
             }
         }
 
