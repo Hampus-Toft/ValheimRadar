@@ -1,4 +1,4 @@
-﻿# Agent Instructions - ValheimRadar
+# Agent Instructions - ValheimRadar
 
 This document defines operating guidelines, safety boundaries, and workflows for autonomous AI agents working on `ValheimRadar`.
 
@@ -6,48 +6,169 @@ This document defines operating guidelines, safety boundaries, and workflows for
 
 ## Project Context
 
-- **Environment:** BepInEx 5 / .NET C# / Unity 2022+ / Valheim API.
-- **Primary Goal:** Perform fast spatial scans around the local player, group entities into clusters, and display/update custom pins on the Valheim minimap.
+- **Environment:** BepInEx 5 / Harmony / Unity / Valheim API. Main plugin targets `netstandard2.1`; the test project targets `net8.0`.
+- **Primary Goal:** Perform fast spatial scans around the local player, group entities into clusters, and display/update custom pins on the Valheim minimap. Also scans world `ZoneSystem` Locations (dungeons, altars, ruins, the trader, etc.) as a separate pinning pipeline.
+- **Solution layout:** `ValheimRadar.slnx` (repo root) contains two projects:
+  - `ValheimRadar/` - the plugin itself (`ValheimRadar.csproj`).
+  - `ValheimRadar.Tests/` - xunit unit tests (`ValheimRadar.Tests.csproj`).
+
+---
+
+## Critical Gotchas (read before running any build)
+
+1. **`dotnet build` on `ValheimRadar.csproj` with the default `Debug` config kills and
+   relaunches the live Steam Valheim process.** The project's `PostBuild` target runs
+   `taskkill /F /IM valheim.exe` and then relaunches via `steam://rungameid/...` whenever
+   `AutoLaunchValheim` is true, which it is by default for any `Debug` build - this is meant
+   for the human's interactive dev loop, not for an agent. **Always build with
+   `dotnet build -c Release` or pass `-p:AutoLaunchValheim=false` when working as an agent**,
+   unless the user explicitly asked you to relaunch the game to test something live.
+2. **This project cannot be built in a sandbox without a real Valheim + Jotunn install.**
+   `ValheimRadar.csproj` references `assembly_valheim.dll`, `UnityEngine*.dll`, `BepInEx.dll`,
+   and `Jotunn.dll` via `HintPath`, resolved from `ValheimInstallDir` (default: the standard
+   Steam path `C:\Program Files (x86)\Steam\steamapps\common\Valheim`, overridable via the
+   `VALHEIM_INSTALL_DIR` env var or `-p:ValheimInstallDir="..."`). A `CheckJotunnReference`
+   target fails the build early with a clear error if `Jotunn.dll` isn't present under
+   `<ValheimInstallDir>\BepInEx\plugins\...` (override its location with
+   `-p:JotunnDllPath="..."` if your mod manager uses a different plugin folder name). If a
+   build fails this way, that's an environment problem, not something to "fix" by deleting the
+   guard target.
+3. **The `PostBuild` target also copies the built DLL into `<ValheimInstallDir>\BepInEx\plugins`
+   and errors if `ValheimInstallDir` doesn't exist.** This is intentional (auto-deploy for local
+   testing), not a bug.
+4. **`dotnet test` is always safe.** `ValheimRadar.Tests.csproj` forces
+   `AutoLaunchValheim=false` on its `ProjectReference` to `ValheimRadar.csproj`, so running the
+   test suite never touches the live game process.
+
+---
+
+## Build & Test Commands
+
+- **Run unit tests (safe, no side effects):** `dotnet test` (from repo root or
+  `ValheimRadar.Tests/`).
+- **Build the plugin (agent-safe):** `dotnet build -c Release` from `ValheimRadar/`, or
+  `dotnet build ValheimRadar.slnx -c Release` from the repo root.
+- **Build + auto-deploy for local interactive testing (human use only):**
+  `dotnet build` (Debug) from `ValheimRadar/` - deploys the DLL and relaunches Valheim.
+- **Clean build:** `dotnet clean && dotnet build -c Release`.
+- **Pack a Thunderstore-importable zip:** `dotnet build -c Release -t:ThunderstorePack`
+  from `ValheimRadar/`. Produces a zip under `ValheimRadar/bin/Thunderstore` containing
+  `manifest.json` + `icon.png` + `README.md` + the plugin DLL, via `Thunderstore/Pack.ps1`.
+  `manifest.json`'s `version_number` is generated from `RadarPlugin.PluginVersion` at pack
+  time - never hand-edit a version number in `Thunderstore/manifest.template.json`; bump the
+  constant in `RadarPlugin.cs` instead. Override the namespace with
+  `-p:ThunderstoreNamespace="YourTeamName"`.
+
+---
+
+## Architecture & File Structure
+
+All code resides within the `ValheimRadar` root namespace. `Scanning/` tracks three distinct
+kinds of content, each with its own evaluator + scanner pair, plus shared helpers extracted so
+none of the three need to depend on each other:
+
+```text
+ValheimRadar/
+├── Configuration/
+│   └── RadarConfig.cs           # ConfigEntry bindings, CreatureDefinition/LocationDefinition tables, master toggles
+├── Models/
+│   ├── ItemCluster.cs           # Centroid, label, and cluster key computation
+│   ├── TrackedItem.cs           # DTO representing a scanned creature/resource/POI (ZDOID, Position, Icon)
+│   └── TrackedLocation.cs       # DTO representing a scanned world Location/POI (no ZDOID)
+├── Pinning/
+│   ├── IconLoader.cs            # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
+│   ├── VanillaIconResolver.cs   # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
+│   └── PinManager.cs            # Minimap pin sync, updates, removals, and icon resolution order
+├── Scanning/
+│   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
+│   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
+│   ├── NameFormatting.cs          # Shared name/display-text helpers (exact-alias matching, title-casing, prefix stripping)
+│   ├── ScanFilters.cs             # Shared pre-filter (debris names, dungeon-interior objects) applied before any evaluator
+│   ├── ScanGeometry.cs            # Shared Physics.OverlapBox cell geometry/query + ScanCellKey
+│   ├── SpatialCellScanner.cs      # Rotating per-cell cache scanner - Type #1 (ephemeral: creatures)
+│   ├── PermanentSpatialScanner.cs # "Scan each cell once, ever" scanner - Types #2/#3 (semi-permanent: resources/physics-POI)
+│   ├── CreatureEvaluator.cs       # Type #1 classification: creatures/fish/Leviathan (used by CreatureScanner)
+│   ├── CreatureScanner.cs         # Type #1 scan loop, wraps SpatialCellScanner
+│   ├── ResourceEvaluator.cs       # Type #2 classification: trees/ores/berries/ground pickables (used by ResourceScanner)
+│   ├── ResourceScanner.cs         # Type #2 scan loop, wraps PermanentSpatialScanner
+│   ├── PoiEvaluator.cs            # Type #3 classification: physics-detected POI fallback (used by PoiScanner)
+│   ├── PoiScanner.cs              # Type #3 (physics fallback) scan loop, wraps PermanentSpatialScanner
+│   └── LocationScanner.cs         # Type #3 (preferred): ZoneSystem.GetLocationList()-based POI discovery (dungeons, altars, ruins, etc.)
+├── docs/
+│   └── ICONS.md                  # Icon resolution order & override naming, for reference when touching Pinning/
+├── Thunderstore/
+│   └── Pack.ps1, manifest.template.json, README.md, icon.png   # ThunderstorePack packaging assets
+└── RadarPlugin.cs               # Plugin lifecycle, update loop, and per-scanner Reset()/scan orchestration
+
+ValheimRadar.Tests/              # xunit tests mirroring the folders above (Models/, Pinning/, Scanning/)
+```
 
 ---
 
 ## Safety & Modification Boundaries
 
 - **Do NOT** change the `ValheimRadar` namespace or break module boundaries.
-- **Do NOT** move scanning logic back into `RadarPlugin.cs`. Keep classification in the relevant type-specific evaluator (`CreatureEvaluator`/`ResourceEvaluator`/`PoiEvaluator`) and clustering in `ClusteringEngine`. `ObjectEvaluator` is only a thin dispatcher (categoryKey -> enabled-state/icon) shared by `PinManager`/`RadarPlugin` - don't add matching rules to it directly.
-- **Do NOT** hardcode absolute file paths. Always use relative paths or BepInEx utilities like `Paths.ConfigPath`.
-- **Do NOT** create persistent static state that leaks memory across server reconnects or world reloads.
+- **Do NOT** move scanning logic back into `RadarPlugin.cs`. Keep classification in the
+  relevant type-specific evaluator (`CreatureEvaluator`/`ResourceEvaluator`/`PoiEvaluator`) or
+  `LocationScanner`, and clustering in `ClusteringEngine`. `ObjectEvaluator` is only a thin
+  composition root/dispatcher (`categoryKey` -> enabled-state/icon) shared by
+  `PinManager`/`RadarPlugin` - don't add matching rules to it directly.
+- **Do NOT** duplicate name-formatting, exact-alias matching, or debris/dungeon-interior
+  filtering logic inside a type-specific evaluator or scanner - that's what
+  `NameFormatting.cs` and `ScanFilters.cs` are for; add to those shared files instead.
+- **Do NOT** hardcode absolute file paths. Always use relative paths or BepInEx utilities like
+  `Paths.ConfigPath`.
+- **Do NOT** create persistent static state that leaks memory across server reconnects or
+  world reloads.
+- **Do NOT** bypass the `CheckJotunnReference`/`PostBuild` MSBuild guard targets in
+  `ValheimRadar.csproj` to "make the build pass" - a failure there means the environment is
+  missing Valheim/Jotunn, not that the check is wrong.
+- **Do NOT** hand-edit the version number in `Thunderstore/manifest.template.json` - it's
+  generated from `RadarPlugin.PluginVersion` at pack time.
 
 ---
 
 ## Agent Playbooks
 
-### Playbook 1: Adding a New Trackable Resource/Entity
+### Playbook 1: Adding a New Trackable Creature/Resource/POI
 
-1. **Add Config Entry:** Add a `ConfigEntry<bool>` in `Configuration/RadarConfig.cs` under the appropriate master group section.
-2. **Pick the right type/file** - ValheimRadar tracks three distinct kinds of content, each with its
-   own scanner and evaluator (see `Scanning/`):
+1. **Pick the right type/file** - ValheimRadar tracks three distinct kinds of content, each
+   with its own scanner and evaluator (see `Scanning/`):
    - **Type #1 - ephemeral** (creatures, fish, the Leviathan): add a rule/alias to
      `Scanning/CreatureEvaluator.cs` (or `RadarConfig.CreatureDefinitions`). Scanned fresh every
-     discovery tick via `CreatureScanner` - never persisted to disk.
-   - **Type #2 - semi-permanent resources** (trees/ores/berries/ground pickables, wild beehives):
-     add a `ResourceRule` to `Scanning/ResourceEvaluator.cs`. Scanned once per map cell, ever, via
-     `ResourceScanner`, then persisted forever in `PinManager`'s raw point store.
+     discovery tick via `CreatureScanner`/`SpatialCellScanner` - never persisted to disk.
+   - **Type #2 - semi-permanent resources** (trees/ores/berries/ground pickables, wild
+     beehives): add a `ResourceRule` to `Scanning/ResourceEvaluator.cs`. Scanned once per map
+     cell, ever, via `ResourceScanner`/`PermanentSpatialScanner`, then persisted forever in
+     `PinManager`'s raw point store.
    - **Type #3 - points of interest** (dungeons, boss altars, runestones, villages, ruins,
      chests, the trader): prefer adding a `LocationDefinition` to `RadarConfig.cs` (discovered
-     cheaply via `Scanning/LocationScanner.cs`'s ZoneSystem query) when the object is a proper
-     Location; only add a `PoiRule` to `Scanning/PoiEvaluator.cs` (physics-scan fallback, via
-     `PoiScanner`) for POI-shaped objects with their own `ZNetView` that ZoneSystem doesn't expose
-     as a Location.
-   - Match the prefab or clean entity name (`nameLower`) using exact aliases, not substrings.
-   - Assign the appropriate `displayName` (or `DisplayNameOverride`) and default PNG fallback icon.
-3. **Verify Build:** Run `dotnet build` to ensure no compiler errors.
+     cheaply via `Scanning/LocationScanner.cs`'s `ZoneSystem.GetLocationList()` query) when the
+     object is a proper Location; only add a `PoiRule` to `Scanning/PoiEvaluator.cs`
+     (physics-scan fallback, via `PoiScanner`/`PermanentSpatialScanner`) for POI-shaped objects
+     with their own `ZNetView` that ZoneSystem doesn't expose as a Location.
+2. **Add a Config Entry:** Add a `ConfigEntry<bool>` in `Configuration/RadarConfig.cs` under the
+   appropriate master group section.
+3. **Match correctly:** Use exact, lowercased prefab-name aliases via `NameFormatting.IsExactAlias`
+   (through each evaluator's own `IsExactAlias` wrapper) - not substring matching. Assign the
+   appropriate `displayName` (or `DisplayNameOverride`) and default PNG fallback icon; add a
+   verified vanilla icon name in `Pinning/VanillaIconResolver.cs` where possible - see
+   `docs/ICONS.md` for the full resolution order before touching icon code.
+4. **Add/extend a unit test** in the matching `ValheimRadar.Tests/Scanning/*Tests.cs` file, then
+   run `dotnet test`.
+5. **Verify build:** `dotnet build -c Release` (see Critical Gotchas above - never a bare
+   Debug `dotnet build` as an agent).
 
 ### Playbook 2: Modifying Clustering Logic
 
-1. **Location:** Edits must be isolated strictly to `Scanning/ClusteringEngine.cs` and `Models/ItemCluster.cs`.
-2. **Centroid Computation:** Ensure `GetCentroid()` handles zero-count lists safely to prevent `Vector3.zero` division errors.
-3. **Keying:** Ensure `GetClusterKey()` produces unique keys per cluster to avoid pin flickering in `PinManager`.
+1. **Location:** Edits must be isolated strictly to `Scanning/ClusteringEngine.cs` and
+   `Models/ItemCluster.cs`.
+2. **Centroid Computation:** Ensure `GetCentroid()` handles zero-count lists safely to prevent
+   `Vector3.zero` division errors.
+3. **Keying:** Ensure `GetClusterKey()` produces unique keys per cluster to avoid pin
+   flickering in `PinManager`.
+4. **Add/extend a unit test** in `ValheimRadar.Tests/Models/ItemClusterTests.cs` and/or
+   `ValheimRadar.Tests/Scanning/ClusteringEngineTests.cs`.
 
 ### Playbook 3: Refactoring / Adding Extensions
 
@@ -57,7 +178,11 @@ This document defines operating guidelines, safety boundaries, and workflows for
    `Jotunn.Utils.AssetUtils` to load user-supplied PNGs, and `Pinning/VanillaIconResolver.cs` uses
    `Jotunn.Managers.GUIManager` to pull verified built-in icons straight from Valheim's own icon
    atlas. Don't reintroduce a standalone PNG/sprite loader or a bespoke `Minimap.m_icons`
-   registration path - route new icon sources through these two files.
+   registration path - route new icon sources through these two files. See `docs/ICONS.md` for
+   the exact resolution order (`PinManager.ResolvePerObjectPin`).
+3. If a new shared need arises across `CreatureEvaluator`/`ResourceEvaluator`/`PoiEvaluator`
+   (e.g. another name-formatting helper or pre-filter rule), add it to `NameFormatting.cs` or
+   `ScanFilters.cs` rather than copy-pasting into one evaluator.
 
 ---
 
@@ -89,8 +214,11 @@ visible without opening the diff.
 ## Verification Steps After Changes
 
 Before submitting changes, ensure:
-1. `dotnet build` passes with 0 errors and 0 warnings.
-2. All new configuration keys are initialized inside `RadarConfig.Initialize()`.
-3. No Unity game logic is invoked off the main thread (Unity API calls must stay on the main thread).
-4. `PluginVersion` in `RadarPlugin.cs` has been bumped per the Versioning Policy above (unless the
-   change is docs-only), and the new version number is in the PR title.
+1. `dotnet test` passes (xunit tests in `ValheimRadar.Tests`, safe to run anytime).
+2. `dotnet build -c Release` passes with 0 errors and 0 warnings (never a bare Debug
+   `dotnet build` as an agent - see Critical Gotchas).
+3. All new configuration keys/definitions are actually consumed inside
+   `RadarConfig.Initialize()` (creatures/resources/POI) or the Location tables +
+   `LocationScanner` (Locations/POIs).
+4. No Unity game logic is invoked off the main thread (Unity API calls must stay on the main
+   thread).
