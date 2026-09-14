@@ -17,7 +17,12 @@ namespace ValheimRadar
     // maxNewCellsPerTick bounds how many brand-new cells get physically queried on any single
     // discovery tick, so a sudden burst of newly-explored ground (teleporting, fast boat travel, a
     // ScanRadius increase) can't spike a single frame - the rest is simply picked up over the next
-    // few ticks.
+    // few ticks. Within that budget, cells nearest the edge of scanRadius (i.e. closest to falling
+    // out of range) are always scanned before cells that just entered near the player - a player
+    // moving quickly (flying, boating, sprinting) continuously pushes trailing-edge cells out of
+    // range, and a cell that exits before it's ever scanned is lost for the rest of the session
+    // (only re-entering the player's path brings it back into contention). Cells near the player
+    // have several more ticks before they're at similar risk, so they can safely wait their turn.
     internal sealed class PermanentSpatialScanner
     {
         private readonly Func<ZNetView, GameObject, string, TrackedItem> classify;
@@ -60,8 +65,7 @@ namespace ValheimRadar
 
         private List<ScanCellKey> ComputeUnscannedActiveCells(Vector3 playerPos, float scanRadius, int maxNewCellsPerTick)
         {
-            List<ScanCellKey> result = new List<ScanCellKey>();
-            if (maxNewCellsPerTick <= 0) return result;
+            if (maxNewCellsPerTick <= 0) return new List<ScanCellKey>();
 
             int minX = Mathf.FloorToInt((playerPos.x - scanRadius) / ScanGeometry.CellSize);
             int maxX = Mathf.FloorToInt((playerPos.x + scanRadius) / ScanGeometry.CellSize);
@@ -74,9 +78,14 @@ namespace ValheimRadar
             float inclusionRadius = scanRadius + (ScanGeometry.CellSize * 0.70711f);
             float inclusionRadiusSq = inclusionRadius * inclusionRadius;
 
-            for (int ix = minX; ix <= maxX && result.Count < maxNewCellsPerTick; ix++)
+            // Collect every unscanned in-range cell first (not just the first maxNewCellsPerTick
+            // found in grid-scan order) so they can be ranked by how urgently each needs scanning
+            // before deciding which ones this tick's budget actually covers.
+            List<(ScanCellKey Key, float DistSq)> candidates = new List<(ScanCellKey, float)>();
+
+            for (int ix = minX; ix <= maxX; ix++)
             {
-                for (int iz = minZ; iz <= maxZ && result.Count < maxNewCellsPerTick; iz++)
+                for (int iz = minZ; iz <= maxZ; iz++)
                 {
                     ScanCellKey key = new ScanCellKey(ix, iz);
                     if (scannedCells.Contains(key)) continue;
@@ -85,12 +94,29 @@ namespace ValheimRadar
                     float centerZ = (iz + 0.5f) * ScanGeometry.CellSize;
                     float dx = centerX - playerPos.x;
                     float dz = centerZ - playerPos.z;
+                    float distSq = (dx * dx) + (dz * dz);
 
-                    if ((dx * dx) + (dz * dz) <= inclusionRadiusSq)
+                    if (distSq <= inclusionRadiusSq)
                     {
-                        result.Add(key);
+                        candidates.Add((key, distSq));
                     }
                 }
+            }
+
+            if (candidates.Count <= maxNewCellsPerTick)
+            {
+                return candidates.ConvertAll(c => c.Key);
+            }
+
+            // Farthest-from-player (closest to the scanRadius boundary) first - those are the cells
+            // nearest to falling out of range and permanently missed, so they get first claim on
+            // this tick's budget.
+            candidates.Sort((a, b) => b.DistSq.CompareTo(a.DistSq));
+
+            List<ScanCellKey> result = new List<ScanCellKey>(maxNewCellsPerTick);
+            for (int i = 0; i < maxNewCellsPerTick; i++)
+            {
+                result.Add(candidates[i].Key);
             }
 
             return result;
