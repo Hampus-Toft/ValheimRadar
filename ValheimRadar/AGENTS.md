@@ -222,3 +222,42 @@ Before submitting changes, ensure:
    `LocationScanner` (Locations/POIs).
 4. No Unity game logic is invoked off the main thread (Unity API calls must stay on the main
    thread).
+
+---
+
+## Opening a Pull Request
+
+Once the Verification Steps above pass, open the PR as follows:
+
+1. **Title** - short, specific, and states what changed (not just "fix bug" or "update
+   scanner"). If the change bumps `PluginVersion` (see Versioning Policy - anything other than
+   a docs-only edit), append the new version in parentheses: `<Short summary> (vX.Y.Z)`, e.g.
+   `Split chest tracking into above-ground/buried (v1.8.0)`. Omit the version suffix only for
+   docs-only PRs that don't touch `ValheimRadar/` code.
+2. **Description** - explain both *what* changed and *why* (the problem/goal it addresses),
+   not a restatement of the diff. Reference the relevant Playbook or config/scanner/evaluator
+   touched if useful context for reviewers.
+3. **Checklist** - always include a checklist in the PR body covering build status, unit
+   tests, and any manual/in-game review steps a human still needs to perform (this project's
+   Jotunn/Valheim dependency means most icon, pin, and config-toggle behavior can't be verified
+   by `dotnet test` or `dotnet build` alone - see Critical Gotchas #2). Use this template,
+   trimming checklist items that don't apply and adding any that do:
+
+   ```markdown
+   ## Summary
+   <What changed and the problem/goal it solves - 1-3 sentences or bullets>
+
+   ## Checklist
+   - [ ] `dotnet test` passes
+   - [ ] `dotnet build -c Release` passes (0 errors, 0 warnings)
+   - [ ] Manual in-game verification (trim to what applies):
+     - [ ] New/changed config option toggles the feature on/off correctly
+     - [ ] New or changed icon renders correctly on the minimap (not a missing/fallback sprite)
+     - [ ] New creature/resource/structure/POI is actually detected and pinned in-game
+     - [ ] Existing pins still update/clear correctly (no flicker, no stale/duplicate pins)
+   ```
+
+   Manual review items are anything requiring a human in a live game session (launching
+   Valheim, toggling a config entry, checking a pin/icon appears as expected) - agents cannot
+   perform these themselves (see Critical Gotcha #1) and must leave them unchecked for the
+   human reviewer.
