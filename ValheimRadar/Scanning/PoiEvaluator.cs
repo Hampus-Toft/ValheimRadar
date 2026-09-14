@@ -70,53 +70,63 @@ namespace ValheimRadar
         internal static readonly PoiRule[] Rules =
         {
             // vendor_blackforest (Haldor) is owned by RadarConfig.LocationDefinitions' Landmarks
-            // group - discovered reliably via ZoneSystem instead of this physics-scan fallback.
-            new PoiRule("Trader", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackTrader.Value, (go, n) => IsExactAlias(n, "bogwitch_camp"), "ruin.png", null, Const("Trader")),
+            // group (AlwaysEnabled - see RadarConfig) - discovered reliably via ZoneSystem instead of
+            // this physics-scan fallback. This rule is the Bog Witch's camp, a distinct trader NPC.
+            new PoiRule("Trader", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackTrader.Value, (go, n) => IsExactAlias(n, "bogwitch_camp"), "ruin.png", null, Const("Bog Witch Camp")),
 
-            // Chests: exact whitelist of natural/world-spawn loot containers. Player-buildable
-            // chests (piece_chest*) are structurally IDENTICAL (same Container+Piece+WearNTear
-            // signature) so there is no component-based way to exclude them - naming is the only
-            // signal, which is exactly why this had to become a whitelist instead of "any Container
-            // component".
+            // CHESTS: exact whitelist of natural/world-spawn loot containers, split into above-ground
+            // (Chests) vs buried/hidden (BuriedChests) per their own toggles. Player-buildable chests
+            // (piece_chest*) are structurally IDENTICAL (same Container+Piece+WearNTear signature) so
+            // there is no component-based way to exclude them - naming is the only signal, which is
+            // exactly why this had to become a whitelist instead of "any Container component".
             new PoiRule("Chests", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackChests.Value, (go, n) => IsExactAlias(n,
-                "treasurechest_meadows", "treasurechest_meadows_01", "treasurechest_meadows_02", "treasurechest_meadows_buried", "treasurechest_meadows_combat",
+                "treasurechest_meadows", "treasurechest_meadows_01", "treasurechest_meadows_02", "treasurechest_meadows_combat",
                 "treasurechest_blackforest", "treasurechest_forestcrypt", "treasurechest_forestcrypt_hildir",
                 "treasurechest_swamp", "treasurechest_sunkencrypt",
                 "treasurechest_heath", "treasurechest_heath_hildir", "treasurechest_plains_stone", "treasurechest_plainsfortress_hildir",
                 "treasurechest_mountains", "treasurechest_mountaincave", "treasurechest_mountaincave_hildir",
                 "treasurechest_dvergrtower", "treasurechest_dvergrtown", "treasurechest_dvergr_loose_stone", "treasurechest_fcrypt",
-                "treasurechest_charredfortress", "treasurechest_ashland_stone", "treasurechest_deepnorth_village", "treasurechest_morkhalla", "treasurechest_memorial_buried",
+                "treasurechest_charredfortress", "treasurechest_ashland_stone", "treasurechest_deepnorth_village", "treasurechest_morkhalla",
                 "treasurechest_trollcave", "loot_chest_stone", "loot_chest_wood", "stonechest",
                 "shipwreck_karve_chest", "shipwreck_vikingship_chest", "crypt_skeleton_chest", "morkhalla_chestancient"
             ), "chest.png", "chest_wood", Const("Chest")),
 
-            // DUNGEON ENTRANCES - matched primarily by exact known prefab name
+            new PoiRule("BuriedChests", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBuriedChests.Value, (go, n) => IsExactAlias(n,
+                "treasurechest_meadows_buried", "treasurechest_memorial_buried"
+            ), "chest.png", "chest_wood", Const("Buried Chest")),
+
+            // DUNGEON ENTRANCES (fallback only) - matched primarily by exact known prefab name
             // (KnownDungeonEntranceAliases), falling back to component-signature detection
             // (Teleport+DungeonGenerator, present on every real dungeon-plane entrance) for anything
             // not in that table. Component-fallback branch guarded against
             // RadarConfig.IsKnownLocationPrefab so it acts only as a defense-in-depth net for
             // entrances the curated LocationDefinitions table doesn't already own, not a duplicate
-            // source for the ones it does.
-            new PoiRule("Dungeons", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackDungeons.Value,
+            // source for the ones it does. Gated by Group_DungeonLocations (not FunctionalStructures)
+            // since this is the same "dungeon entrance" category as that curated Location group, just
+            // its physics-scan catch-all.
+            new PoiRule("Dungeons", () => RadarConfig.Group_DungeonLocations.Value && RadarConfig.TrackUnlistedDungeons.Value,
                 (go, n) => IsExactAlias(n, KnownDungeonEntranceAliases) || (!RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<Teleport>() != null && go.GetComponent<DungeonGenerator>() != null),
                 "dungeon.png", null, n => DungeonEntranceNames.TryGetValue(n, out string label) ? label : "Dungeon Entrance"),
 
             // RUNESTONES (fallback only) - every biome runestone carries a RuneStone component, so
             // this stays component-based, but guarded against RadarConfig.IsKnownLocationPrefab so
             // it only catches runestones NOT already owned by RadarConfig.LocationDefinitions'
-            // Runestones group (which discovers every biome variant reliably via ZoneSystem).
-            new PoiRule("Runestones", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackRunestones.Value, (go, n) => !RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<RuneStone>() != null, "runestone.png"),
+            // Runestones group (which discovers every biome variant reliably via ZoneSystem). Gated
+            // by Group_RunestoneLocations, the same group that governs the curated list.
+            new PoiRule("Runestones", () => RadarConfig.Group_RunestoneLocations.Value && RadarConfig.TrackRunestones.Value, (go, n) => !RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<RuneStone>() != null, "runestone.png"),
 
-            // combatruin01/woodvillage2 have no equivalent in RadarConfig.LocationDefinitions -
-            // everything else this rule used to match is now owned by the Ruins & Structures group,
-            // discovered reliably via ZoneSystem instead of this physics-scan fallback.
-            new PoiRule("AbandonedRuins", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackAbandonedRuins.Value, (go, n) => IsExactAlias(n, "combatruin01", "woodvillage2"), "ruin.png"),
+            // ABANDONED RUINS (fallback only) - combatruin01/woodvillage2 have no equivalent in
+            // RadarConfig.LocationDefinitions - everything else this rule used to match is now owned
+            // by the Ruins & Structures group, discovered reliably via ZoneSystem instead of this
+            // physics-scan fallback. Gated by Group_RuinLocations, the same group that governs the
+            // curated list.
+            new PoiRule("AbandonedRuins", () => RadarConfig.Group_RuinLocations.Value && RadarConfig.TrackAbandonedRuins.Value, (go, n) => IsExactAlias(n, "combatruin01", "woodvillage2"), "ruin.png"),
 
-            // POINTS OF INTEREST (monster spawners / harvestable landmarks)
-            new PoiRule("GreydwarfNest", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGreydwarfNest.Value, (go, n) => IsExactAlias(n, "spawner_greydwarfnest"), "ruin.png", null, Const("Greydwarf Nest")),
-            new PoiRule("BodyPile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBodyPile.Value, (go, n) => IsExactAlias(n, "spawner_draugrpile"), "ruin.png", null, Const("Body Pile")),
-            new PoiRule("BonePile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBonePile.Value, (go, n) => IsExactAlias(n, "bonepilespawner", "bonepilespawner_swamp"), "ruin.png", null, Const("Bone Pile")),
-            new PoiRule("Guck", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", null, Const("Guck Sack")),
+            // SPAWNERS & LANDMARKS (monster spawners / harvestable Guck Sacks)
+            new PoiRule("GreydwarfNest", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackGreydwarfNest.Value, (go, n) => IsExactAlias(n, "spawner_greydwarfnest"), "ruin.png", null, Const("Greydwarf Nest")),
+            new PoiRule("BodyPile", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackBodyPile.Value, (go, n) => IsExactAlias(n, "spawner_draugrpile"), "ruin.png", null, Const("Body Pile")),
+            new PoiRule("BonePile", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackBonePile.Value, (go, n) => IsExactAlias(n, "bonepilespawner", "bonepilespawner_swamp"), "ruin.png", null, Const("Bone Pile")),
+            new PoiRule("Guck", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", null, Const("Guck Sack")),
         };
 
         internal static bool TryClassify(GameObject go, string nameLower, out string displayName, out Sprite icon, out string categoryKey)

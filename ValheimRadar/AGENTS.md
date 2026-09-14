@@ -186,6 +186,31 @@ ValheimRadar.Tests/              # xunit tests mirroring the folders above (Mode
 
 ---
 
+## Versioning Policy
+
+ValheimRadar follows semantic versioning (`MAJOR.MINOR.PATCH`). `PluginVersion` in `RadarPlugin.cs`
+is the **single source of truth** - `Thunderstore/Pack.ps1` reads that constant directly at pack
+time, so there is nowhere else to update by hand (no `manifest.json` version to keep in sync).
+
+**Every change that touches code under `ValheimRadar/` (anything other than a docs-only edit) must
+bump `PluginVersion` as part of the same change.** Bump exactly one segment - whichever tier matches
+the *most significant* part of the diff - and follow standard semver rollover (bumping MINOR resets
+PATCH to 0; bumping MAJOR resets MINOR and PATCH to 0):
+
+- **MAJOR** - fully new functionality, or the removal of core functionality. Example: adding a new
+  scanner/evaluator type, dropping an entire tracked category outright, a save-format change with no
+  migration path.
+- **MINOR** - performance changes, and smaller feature additions or removals. Example: adding a new
+  trackable entity to an existing category, reorganizing/renaming config toggles, splitting or
+  merging an existing toggle (e.g. Chests -> Chests + Buried Chests), tuning scan performance.
+- **PATCH** - documentation, cleanup/refactors with no behavior change, small bug fixes.
+
+When opening a PR for a change that bumps the version, **include the new version number in the PR
+title** (e.g. `Split chest tracking into above-ground/buried (v1.8.0)`), so the version bump is
+visible without opening the diff.
+
+---
+
 ## Verification Steps After Changes
 
 Before submitting changes, ensure:
