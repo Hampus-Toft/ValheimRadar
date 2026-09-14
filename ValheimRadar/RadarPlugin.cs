@@ -11,7 +11,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.8.0";
+        public const string PluginVersion = "1.7.4";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
@@ -141,14 +141,16 @@ namespace ValheimRadar
             // Type #2/#3 (semi-permanent) - resources and physics-detected points of interest don't
             // move, so each scanner only ever physically queries map cells it has never scanned
             // before (see ResourceScanner/PoiScanner/PermanentSpatialScanner) and returns just this
-            // tick's newly-discovered points, if any. Those merge into the durable raw store and are
+            // tick's newly-discovered points, if any - every such cell currently in range is scanned
+            // this same tick (not trickled in over several), so ground the player only passes through
+            // briefly is never silently skipped. Those merge into the durable raw store and are
             // clustered incrementally - only newly-discovered points touch existing clusters, so a
             // session's full discovery history never gets reclustered from scratch on a normal tick
             // (a ClusterDistance change is handled separately - see PinManager.RecordRawPoints). Pin
             // updates are then pushed only for whatever clusters actually changed - on most ticks,
             // once the local area is fully explored, that's nothing at all.
-            List<TrackedItem> newResources = ResourceScanner.ScanNewCells(playerPos, scanRadius, RadarConfig.PermanentScanCellsPerTick.Value);
-            List<TrackedItem> newPoi = PoiScanner.ScanNewCells(playerPos, scanRadius, RadarConfig.PermanentScanCellsPerTick.Value);
+            List<TrackedItem> newResources = ResourceScanner.ScanNewCells(playerPos, scanRadius);
+            List<TrackedItem> newPoi = PoiScanner.ScanNewCells(playerPos, scanRadius);
 
             // Called unconditionally, even with an empty list - RecordRawPoints also checks every
             // call for a ClusterDistance config change and triggers a full recluster if so, which
