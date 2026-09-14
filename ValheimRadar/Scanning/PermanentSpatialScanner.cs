@@ -14,10 +14,16 @@ namespace ValheimRadar
     // scanner shrinks over a session as the map gets explored, instead of paying a steady per-tick
     // cost forever like a rotating cache would.
     //
-    // maxNewCellsPerTick bounds how many brand-new cells get physically queried on any single
-    // discovery tick, so a sudden burst of newly-explored ground (teleporting, fast boat travel, a
-    // ScanRadius increase) can't spike a single frame - the rest is simply picked up over the next
-    // few ticks.
+    // Every unscanned cell currently within scanRadius is scanned on the SAME tick it enters range -
+    // deliberately not trickled in over several ticks. A cell only ever gets one chance to be scanned
+    // (once it leaves scanRadius unscanned, it's not revisited unless the player physically returns),
+    // so a budget that spreads discovery across multiple ticks can outright miss ground the player
+    // only passed through briefly (flying, boating, a fast mount) - the cell enters and leaves
+    // scanRadius within a single tick and never gets queried at all. Scanning everything in range
+    // immediately guarantees that can't happen. This is safe to do unconditionally because the "once
+    // ever" model already bounds the worst case: a genuinely large single-tick burst only happens on
+    // a first join, a teleport, or a ScanRadius increase, and even then it's a one-time cost against
+    // ground that would otherwise need scanning eventually anyway.
     internal sealed class PermanentSpatialScanner
     {
         private readonly Func<ZNetView, GameObject, string, TrackedItem> classify;
@@ -37,14 +43,14 @@ namespace ValheimRadar
             scannedCells.Clear();
         }
 
-        // Physically scans up to maxNewCellsPerTick cells that are within scanRadius of playerPos
-        // and have never been scanned before, and returns whatever matched in them. Already-scanned
-        // cells contribute nothing here (their finds are already permanently recorded by the
-        // caller), so - unlike SpatialCellScanner.ScanBatch - this only ever returns a delta of
-        // brand-new points, never the full accumulated set.
-        internal List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius, int maxNewCellsPerTick)
+        // Physically scans every cell within scanRadius of playerPos that has never been scanned
+        // before, and returns whatever matched in them. Already-scanned cells contribute nothing here
+        // (their finds are already permanently recorded by the caller), so - unlike
+        // SpatialCellScanner.ScanBatch - this only ever returns a delta of brand-new points, never the
+        // full accumulated set.
+        internal List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius)
         {
-            List<ScanCellKey> newCells = ComputeUnscannedActiveCells(playerPos, scanRadius, maxNewCellsPerTick);
+            List<ScanCellKey> newCells = ComputeUnscannedActiveCells(playerPos, scanRadius);
             if (newCells.Count == 0) return new List<TrackedItem>();
 
             List<TrackedItem> found = new List<TrackedItem>();
@@ -58,10 +64,9 @@ namespace ValheimRadar
             return found;
         }
 
-        private List<ScanCellKey> ComputeUnscannedActiveCells(Vector3 playerPos, float scanRadius, int maxNewCellsPerTick)
+        private List<ScanCellKey> ComputeUnscannedActiveCells(Vector3 playerPos, float scanRadius)
         {
             List<ScanCellKey> result = new List<ScanCellKey>();
-            if (maxNewCellsPerTick <= 0) return result;
 
             int minX = Mathf.FloorToInt((playerPos.x - scanRadius) / ScanGeometry.CellSize);
             int maxX = Mathf.FloorToInt((playerPos.x + scanRadius) / ScanGeometry.CellSize);
@@ -74,9 +79,9 @@ namespace ValheimRadar
             float inclusionRadius = scanRadius + (ScanGeometry.CellSize * 0.70711f);
             float inclusionRadiusSq = inclusionRadius * inclusionRadius;
 
-            for (int ix = minX; ix <= maxX && result.Count < maxNewCellsPerTick; ix++)
+            for (int ix = minX; ix <= maxX; ix++)
             {
-                for (int iz = minZ; iz <= maxZ && result.Count < maxNewCellsPerTick; iz++)
+                for (int iz = minZ; iz <= maxZ; iz++)
                 {
                     ScanCellKey key = new ScanCellKey(ix, iz);
                     if (scannedCells.Contains(key)) continue;

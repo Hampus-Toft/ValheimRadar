@@ -16,8 +16,8 @@ namespace ValheimRadar
         // ordinary config changes deliberately don't reset this.
         public static void Reset() => scanner.Reset();
 
-        public static List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius, int maxNewCellsPerTick) =>
-            scanner.ScanNewCells(playerPos, scanRadius, maxNewCellsPerTick);
+        public static List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius) =>
+            scanner.ScanNewCells(playerPos, scanRadius);
 
         private static TrackedItem Classify(ZNetView netView, GameObject go, string nameLower)
         {
