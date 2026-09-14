@@ -147,6 +147,16 @@ namespace ValheimRadar.Tests.Scanning
         }
 
         [Fact]
+        public void GuckSack_ResolvesToVerifiedGuckItemIcon()
+        {
+            // Guck Sack has no vanilla "trophy" (it's harvested, not killed), but it does drop the
+            // "Guck" material, whose vanilla item icon ("guck") is a verified sprite atlas name -
+            // previously this rule passed no vanilla icon at all, so it fell straight through to the
+            // generic "ruin.png" category default/built-in fallback pin.
+            Assert.Equal("guck", ObjectEvaluator.GetVanillaIconForCategory("resource:Guck"));
+        }
+
+        [Fact]
         public void NewPointsOfInterestRules_AreRegisteredWithExpectedIcons()
         {
             Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:ObsidianDeposit"));
@@ -242,6 +252,18 @@ namespace ValheimRadar.Tests.Scanning
             var entry = ObjectEvaluator.FindCreatureOverride("hatchling", out string matchedKey);
 
             Assert.Equal("drake", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Surtling_ResolvesViaOwnCreatureDefinition()
+        {
+            // Previously had no RadarConfig.CreatureDefinitions entry at all, so it only ever
+            // matched the generic hostile-monster fallback (no per-species toggle, no dedicated
+            // trophy icon).
+            var entry = ObjectEvaluator.FindCreatureOverride("surtling", out string matchedKey);
+
+            Assert.Equal("surtling", matchedKey);
             Assert.NotNull(entry);
         }
 

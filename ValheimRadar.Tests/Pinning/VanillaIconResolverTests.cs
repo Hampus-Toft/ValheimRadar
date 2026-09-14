@@ -25,6 +25,16 @@ namespace ValheimRadar.Tests.Pinning
         }
 
         [Fact]
+        public void GetCreatureTrophySprite_Surtling_ResolvesToVerifiedTrophySprite()
+        {
+            // Surtling previously had no RadarConfig.CreatureDefinitions entry at all, so it only
+            // ever matched the generic hostile-monster fallback and got the generic monster icon
+            // instead of its own vanilla trophy sprite.
+            Assert.True(RadarConfig.AliasLookup.ContainsKey("surtling"));
+            Assert.Equal("TrophySurtling", VanillaIconResolver.GetCreatureTrophySprite("surtling"));
+        }
+
+        [Fact]
         public void GetCreatureTrophySprite_UnknownKey_ReturnsNull()
         {
             Assert.Null(VanillaIconResolver.GetCreatureTrophySprite("not_a_real_creature"));
