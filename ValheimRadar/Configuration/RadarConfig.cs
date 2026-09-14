@@ -167,6 +167,10 @@ namespace ValheimRadar
             // Real prefab is "Hatchling" (loca $enemy_drake -> "Drake") - "drake" itself is not a
             // real prefab name at all, which is why it never matched in-game.
             new CreatureDefinition("drake", new[] { "hatchling" }, "Drake", SecMountain, isMonster: true),
+            // Previously only reachable via the generic hostile fallback (no CreatureDefinitions
+            // entry existed), so individually un-toggleable and stuck with the generic monster icon
+            // instead of its own verified trophy sprite (see VanillaIconResolver).
+            new CreatureDefinition("surtling", new[] { "surtling" }, "Surtling", SecMountain, isMonster: true),
 
             // PLAINS
             new CreatureDefinition("lox", new[] { "lox", "lox_calf" }, "Lox", SecPlains, isMonster: false, tameable: true),

@@ -54,6 +54,7 @@ namespace ValheimRadar
             ["bear"] = "TrophyBjorn",
             ["stonegolem"] = "TrophySGolem",
             ["drake"] = "TrophyHatchling",
+            ["surtling"] = "TrophySurtling",
             ["lox"] = "TrophyLox",
             ["deathsquito"] = "TrophyDeathSquito",
             ["fuling_berserker"] = "TrophyGoblinBrute",

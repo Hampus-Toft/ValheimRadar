@@ -131,7 +131,7 @@ namespace ValheimRadar
             // & Landmarks, since players look for it alongside the other Swamp/ore resources; still
             // physics-scan detected here rather than a ResourceEvaluator ResourceRule since it has no
             // MineRock component.
-            new PoiRule("Guck", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", null, Const("Guck Sack")),
+            new PoiRule("Guck", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", "guck", Const("Guck Sack")),
         };
 
         internal static bool TryClassify(GameObject go, string nameLower, out string displayName, out Sprite icon, out string categoryKey)
