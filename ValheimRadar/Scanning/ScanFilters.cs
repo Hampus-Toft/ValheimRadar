@@ -1,0 +1,42 @@
+using UnityEngine;
+
+namespace ValheimRadar
+{
+    // Pre-filter shared by every type-specific scanner (CreatureScanner/ResourceScanner/PoiScanner)
+    // - object classes that should never be pinned regardless of which of the three types they'd
+    // otherwise resemble. Applied once, before dispatching to a type's own evaluator, so none of
+    // CreatureEvaluator/ResourceEvaluator/PoiEvaluator need to duplicate these checks.
+    internal static class ScanFilters
+    {
+        // Destruction-fragment/debris pieces (e.g. a boss arena's stone pillars shattering apart on
+        // death) are never legitimate resources, POI, or creatures in their own right. Rejected
+        // purely by name, before any other check - Valheim's shatter system generates these
+        // dynamically, so there's no fixed list to match instead.
+        private static readonly string[] DebrisNameMarkers = { "_frac", "debris", "rubble", "fragment", "_piece", "_chip" };
+
+        // Dungeon/cave interiors (crypts, sunken crypts, dvergr forts, mountain caves, ...) are
+        // generated at a large, fixed vertical offset from the real terrain at their entrance's X/Z -
+        // "high in the sky" or "underground" relative to the actual ground - so their objects have no
+        // sensible position on the 2D minimap and just show up confusingly stacked on whatever is
+        // really at that spot on the surface. Generous enough that real terrain variance (cliffs,
+        // mountain peaks) directly above/below a point is never mistaken for a dungeon interior -
+        // genuine dungeon-generation offsets are far larger than that.
+        private const float DungeonHeightOffsetThreshold = 40f;
+
+        internal static bool ShouldReject(GameObject go, string nameLower)
+        {
+            if (NameFormatting.ContainsAny(nameLower, DebrisNameMarkers)) return true;
+            if (IsInsideDungeonInterior(go.transform.position)) return true;
+
+            return false;
+        }
+
+        private static bool IsInsideDungeonInterior(Vector3 position)
+        {
+            if (ZoneSystem.instance == null) return false;
+            if (!ZoneSystem.instance.GetGroundHeight(position, out float groundHeight)) return false;
+
+            return Mathf.Abs(position.y - groundHeight) > DungeonHeightOffsetThreshold;
+        }
+    }
+}

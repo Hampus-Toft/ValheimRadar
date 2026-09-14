@@ -29,6 +29,15 @@ ValheimRadar/
 │   ├── VanillaIconResolver.cs # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
 │   └── PinManager.cs        # Minimap pin sync, updates, removals, and icon routing
 ├── Scanning/
-│   ├── ClusteringEngine.cs  # Spatial distance-based point-clustering logic
-│   └── ObjectEvaluator.cs   # Entity classification, star rating parsing, and filtering
+│   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
+│   ├── ObjectEvaluator.cs         # Thin dispatcher: categoryKey -> enabled-state/icon lookups
+│   ├── NameFormatting.cs          # Shared name/display-text helpers (alias matching, title-casing)
+│   ├── ScanFilters.cs             # Shared pre-filter (debris names, dungeon-interior objects)
+│   ├── ScanGeometry.cs            # Shared Physics.OverlapBox cell geometry/query
+│   ├── SpatialCellScanner.cs      # Rotating per-cell cache scanner (type #1: ephemeral)
+│   ├── PermanentSpatialScanner.cs # "Scan each cell once" scanner (types #2/#3: semi-permanent)
+│   ├── CreatureEvaluator.cs + CreatureScanner.cs   # Type #1: creatures/fish/Leviathan
+│   ├── ResourceEvaluator.cs + ResourceScanner.cs   # Type #2: trees/ores/berries/pickables
+│   ├── PoiEvaluator.cs + PoiScanner.cs             # Type #3: physics-detected POI fallback
+│   └── LocationScanner.cs         # Type #3: ZoneSystem-based POI discovery (dungeons, ruins, etc.)
 └── RadarPlugin.cs           # Plugin lifecycle, update loop, and overlap scanning

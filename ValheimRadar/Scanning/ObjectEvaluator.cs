@@ -1,436 +1,44 @@
-using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Text.RegularExpressions;
-using UnityEngine;
-
 namespace ValheimRadar
 {
+    // Thin composition root over the three type-specific evaluators (CreatureEvaluator,
+    // ResourceEvaluator, PoiEvaluator) plus LocationScanner's ZoneSystem-based POI table. Each
+    // scanner (CreatureScanner/ResourceScanner/PoiScanner) calls straight into its own evaluator to
+    // classify a freshly-scanned object; this class exists so PinManager/RadarPlugin have one place
+    // to resolve a categoryKey's enabled-state/icon without caring which evaluator originally
+    // produced it - used to redraw/hide pins on config toggle, and to reconstruct pins loaded from
+    // disk after a relog.
     public static class ObjectEvaluator
     {
-        private sealed class ResourceRule
-        {
-            public readonly string Id;
-            public readonly Func<bool> Enabled;
-            public readonly Func<GameObject, string, bool> Matches;
-            public readonly string IconPng;
-            public readonly string VanillaIcon;
-            public readonly Func<string, string> DisplayNameOverride; // nameLower -> label; null = keep hover-text/go.name derived name
+        /// <summary>
+        /// Strips known engine/asset prefixes and the "(Clone)" instantiation suffix from a raw
+        /// Unity object name. Used for display-name formatting and the icon-cache/PNG-override key
+        /// (see PinManager.ResolvePerObjectPin) - NOT for whitelist match decisions (see
+        /// NameFormatting.IsExactAlias), since stripping "piece_" here is exactly what could make a
+        /// player-built object collide with an unrelated natural one of the same base name.
+        /// </summary>
+        public static string StripKnownPrefixes(string rawName) => NameFormatting.StripKnownPrefixes(rawName);
 
-            public ResourceRule(string id, Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng, string vanillaIcon = null, Func<string, string> displayNameOverride = null)
-            {
-                Id = id;
-                Enabled = enabled;
-                Matches = matches;
-                IconPng = iconPng;
-                VanillaIcon = vanillaIcon;
-                DisplayNameOverride = displayNameOverride;
-            }
-        }
+        internal static string FormatHumanFriendlyName(string rawName) => NameFormatting.FormatHumanFriendlyName(rawName);
 
-        private static Func<string, string> Const(string label) => _ => label;
+        internal static bool ContainsAny(string value, string[] markers) => NameFormatting.ContainsAny(value, markers);
 
-        // Exact match against the raw, lowercased, (Clone)-stripped GameObject name (exactly what
-        // BatchScanner produces) - deliberately NOT run through StripKnownPrefixes first. Stripping
-        // prefixes like "piece_" before matching would let a player-built object collide with an
-        // unrelated natural one that happens to share the same base name (e.g. "piece_beehive"
-        // stripped to "beehive" would collide with the natural "Beehive" prefab) - exactly the class
-        // of bug this whitelist rewrite exists to eliminate. StripKnownPrefixes is still used, as
-        // before, for display-name formatting and the icon-cache/PNG-override key - just not here.
-        private static bool IsExactAlias(string nameLower, params string[] aliases)
-        {
-            foreach (var alias in aliases)
-            {
-                if (nameLower == alias) return true;
-            }
-            return false;
-        }
+        internal static RadarConfig.CreatureConfigEntry FindCreatureOverride(string nameLower, out string matchedKey) =>
+            CreatureEvaluator.FindCreatureOverride(nameLower, out matchedKey);
 
-        // Prefab name (lowercase) -> friendly dungeon label, for entrance prefabs NOT already owned
-        // by RadarConfig.LocationDefinitions (see the Dungeon Entrances / Boss Altars groups, which
-        // supersede crypt2/3/4, sunkencrypt4, trollcave02, mountaincave02, the Dvergr town/boss
-        // entrances - those are now discovered reliably via ZoneSystem instead of this physics-scan
-        // fallback). What's left here is entrance content the curated Location table doesn't cover.
-        // Anything with the right Teleport+DungeonGenerator signature but not listed here still gets
-        // pinned via the "Dungeons" ResourceRule below, just as a generic "Dungeon Entrance" - nothing
-        // is silently dropped, only unlabeled until confirmed.
-        private static readonly Dictionary<string, string> DungeonEntranceNames = new Dictionary<string, string>
-        {
-            ["halfburried_forestcrypt"] = "Burial Chambers",
-            ["hildir_crypt"] = "Burial Chambers (Hildir)",
-            ["hildir_cave"] = "Frost Caves (Hildir)",
-            ["bearcave"] = "Bear Cave",
-        };
-
-        // Every prefab name DungeonEntranceNames knows about, lowercased - matched directly (in
-        // addition to the Teleport+DungeonGenerator component check below) because BearCave is
-        // confirmed to carry only a Teleport component, no DungeonGenerator, so the component check
-        // alone would never catch it; and because the visible "entrance you walk up to" for some
-        // crypts may not be the same GameObject the Teleport/DungeonGenerator components actually
-        // sit on, so an exact-name match here is the reliable primary signal, with the component
-        // check kept only as a fallback net for anything not in this table (and not already owned by
-        // RadarConfig.LocationDefinitions - see the IsKnownLocationPrefab guard below).
-        private static readonly string[] KnownDungeonEntranceAliases =
-        {
-            "halfburried_forestcrypt", "hildir_crypt", "hildir_cave", "bearcave",
-        };
-
-        // Resource/structure categories, evaluated in this order. The first rule whose group+track
-        // toggle is enabled and whose predicate matches wins - same semantics as the original
-        // near-identical if/return blocks, just expressed as data. Id is a stable identifier
-        // (independent of the Enabled closure) so a category's enabled state can be re-checked later
-        // from just a string, without a live GameObject - used to redraw/hide pins on config toggle
-        // and to reconstruct pins loaded from disk after a relog.
-        //
-        // Every predicate below matches EXACT prefab names (see IsExactAlias), not substrings - this
-        // is the whole point of this rewrite. Exact names were sourced from Jotunn's generated prefab
-        // list, not guessed, and VanillaIcon values are exact, verified names from Valheim's own icon
-        // atlas (Jotunn's generated sprite-list reference) wherever one is confirmed to exist; a rule
-        // with VanillaIcon = null falls back to its category PNG/built-in default rather than risk a
-        // wrong guessed sprite name.
-        private static readonly ResourceRule[] ResourceRules =
-        {
-            // BERRIES (wild bushes only - exact match excludes the hammer-placeable decoration
-            // items "Raspberry"/"Blueberries"/"Cloudberry", which are different, Piece-based
-            // prefabs that happen to share the same base word).
-            new ResourceRule("Raspberry", () => RadarConfig.Group_Berries.Value && RadarConfig.TrackRaspberry.Value, (go, n) => IsExactAlias(n, "raspberrybush"), "berry.png", "raspberry"),
-            new ResourceRule("Blueberry", () => RadarConfig.Group_Berries.Value && RadarConfig.TrackBlueberry.Value, (go, n) => IsExactAlias(n, "blueberrybush"), "berry.png", "blueberries"),
-            new ResourceRule("Cloudberry", () => RadarConfig.Group_Berries.Value && RadarConfig.TrackCloudberry.Value, (go, n) => IsExactAlias(n, "cloudberrybush"), "berry.png", "cloudberry"),
-
-            // MUSHROOMS (wild only - no plantable equivalent exists in vanilla Valheim)
-            new ResourceRule("RedMushroom", () => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackRedMushroom.Value, (go, n) => IsExactAlias(n, "pickable_mushroom"), "mushroom.png", "mushroom"),
-            new ResourceRule("YellowMushroom", () => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackYellowMushroom.Value, (go, n) => IsExactAlias(n, "pickable_mushroom_yellow"), "mushroom.png", "mushroomyellow"),
-            new ResourceRule("BlueMushroom", () => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackBlueMushroom.Value, (go, n) => IsExactAlias(n, "pickable_mushroom_blue"), "mushroom.png", "mushroomblue"),
-
-            // FLOWERS & CROPS. Dandelion/Thistle are wild-only. Carrot/Turnip/Onion/Barley/Flax/
-            // Magecap are ALSO plantable via the Cultivator, but confirmed as genuinely separate
-            // prefabs from their wild Pickable_* counterparts - the planted piece is a Plant+Piece
-            // "sapling_*" object that is harvested in place and never spawns a Pickable_*
-            // GameObject - so matching only the Pickable_* names below permanently excludes
-            // anything player-planted.
-            new ResourceRule("Dandelion", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackDandelion.Value, (go, n) => IsExactAlias(n, "pickable_dandelion"), "crop.png", "dandelion"),
-            new ResourceRule("Thistle", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackThistle.Value, (go, n) => IsExactAlias(n, "pickable_thistle"), "crop.png", "thistle"),
-            new ResourceRule("CarrotSeed", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackCarrotSeed.Value, (go, n) => IsExactAlias(n, "pickable_carrot", "pickable_seedcarrot"), "crop.png", "carrotseeds"),
-            new ResourceRule("TurnipSeed", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackTurnipSeed.Value, (go, n) => IsExactAlias(n, "pickable_turnip", "pickable_seedturnip"), "crop.png", "turnipseeds"),
-            new ResourceRule("OnionSeed", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackOnionSeed.Value, (go, n) => IsExactAlias(n, "pickable_onion", "pickable_seedonion"), "crop.png", "onionseeds"),
-            new ResourceRule("Barley", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackBarley.Value, (go, n) => IsExactAlias(n, "pickable_barley", "pickable_barley_wild"), "crop.png", "barley"),
-            new ResourceRule("Flax", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackFlax.Value, (go, n) => IsExactAlias(n, "pickable_flax", "pickable_flax_wild"), "crop.png", "flax"),
-            new ResourceRule("Magecap", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackMagecap.Value, (go, n) => IsExactAlias(n, "pickable_mushroom_magecap"), "crop.png", "mushroommagecap"),
-
-            // GROUND PICKABLES. Exact match specifically excludes "placeable_stone" - a player
-            // hammer-placeable decoration that (surprisingly) also carries a live Pickable
-            // component, so the old Contains("stone")+Pickable-component guard would have matched
-            // it too.
-            new ResourceRule("Flint", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackFlint.Value, (go, n) => IsExactAlias(n, "pickable_flint"), "ground.png", "flint"),
-            new ResourceRule("Stone", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackStone.Value, (go, n) => IsExactAlias(n, "pickable_stone", "pickable_stonerock"), "ground.png", "stone"),
-            new ResourceRule("Wood", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackWood.Value, (go, n) => IsExactAlias(n, "pickable_branch", "pickable_branch_snow"), "ground.png", "wood"),
-
-            // ORES - each metal split into Deposit (uncollected world vein/node) / Ore (dropped or
-            // picked raw ore item) / Ingot (smelted bar) buckets, so they can never again render as
-            // one conflated pin (the reported "copper ore and copper ingot both show as Copper"
-            // bug). DisplayNameOverride guarantees the three buckets stay visually distinct on the
-            // map regardless of whether Valheim's own hover text/localization cooperates - this is
-            // also the fix for pins that used to show a raw, untranslated "[piece_deposit_copper]"
-            // string, since the label no longer depends on hover text resolving at all.
-            new ResourceRule("CopperDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "minerock_copper", "rock4_copper", "rock4_copper_frac"), "ore.png", "copperore", Const("Copper Deposit")),
-            new ResourceRule("CopperOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "copperore"), "ore.png", "copperore", Const("Copper Ore")),
-            new ResourceRule("CopperIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "copper"), "ore.png", "bar_copper_stack", Const("Copper")),
-
-            // Tin is a vanilla quirk: MineRock_Tin (Destructible, no MineRock component) IS the
-            // deposit object itself, unlike Copper's separate MineRock_Copper vein + rock4_copper
-            // surface node.
-            new ResourceRule("TinDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "minerock_tin"), "ore.png", "TinOre", Const("Tin Deposit")),
-            new ResourceRule("TinOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tinore"), "ore.png", "TinOre", Const("Tin Ore")),
-            new ResourceRule("TinIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tin"), "ore.png", "bar_tin_stack", Const("Tin")),
-
-            // Iron has no confirmed surface "deposit" node in vanilla world-gen - the classic
-            // source is digging mudpile/mudpile2 in Sunken Crypts, which directly drops IronScrap
-            // (no separate vein object). Exact match on "iron" excludes every false-positive that
-            // broke this before (fire_pit_iron, piece_cookingstation_iron, ArmorIronChest,
-            // SwordIron, iron_grate, ...) by construction, since none of those raw names equal
-            // "iron". minerock_iron is a real, registered prefab (MineRock component, matching the
-            // MineRock_Copper/_Tin pattern) but unconfirmed whether vanilla world-gen ever actually
-            // places it - included defensively since a name that's never placed simply never
-            // matches, at no cost.
-            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "ironscrap", "mudpile", "mudpile2", "pickable_bogironore", "minerock_iron"), "ore.png", "ironscrap", Const("Iron Scrap")),
-            new ResourceRule("IronIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "iron"), "ore.png", null, Const("Iron")),
-
-            new ResourceRule("SilverDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silvervein", "silvervein_frac", "rock3_silver", "rock3_silver_frac"), "ore.png", "silverore", Const("Silver Deposit")),
-            new ResourceRule("SilverOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silverore"), "ore.png", "silverore", Const("Silver Ore")),
-            new ResourceRule("SilverIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silver"), "ore.png", null, Const("Silver")),
-
-            // Obsidian is used directly as a mined material - no smelting step, so no separate
-            // Ore/Ingot split (confirmed no ObsidianOre/ObsidianIngot prefab exists).
-            new ResourceRule("ObsidianDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackObsidian.Value, (go, n) => IsExactAlias(n, "minerock_obsidian"), "ore.png", null, Const("Obsidian Deposit")),
-
-            // FUNCTIONAL STRUCTURES
-            new ResourceRule("Beehives", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackBeehives.Value, (go, n) => IsExactAlias(n, "beehive"), "beehive.png", "beehive"),
-
-            // vendor_blackforest (Haldor) is now owned by RadarConfig.LocationDefinitions' Landmarks
-            // group - discovered reliably via ZoneSystem instead of this physics-scan fallback.
-            new ResourceRule("Trader", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackTrader.Value, (go, n) => IsExactAlias(n, "bogwitch_camp"), "ruin.png", null, Const("Trader")),
-
-            // Chests: exact whitelist of natural/world-spawn loot containers. Player-buildable
-            // chests (piece_chest*) are structurally IDENTICAL (same Container+Piece+WearNTear
-            // signature) so there is no component-based way to exclude them - naming is the only
-            // signal, which is exactly why this had to become a whitelist instead of "any
-            // Container component".
-            new ResourceRule("Chests", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackChests.Value, (go, n) => IsExactAlias(n,
-                "treasurechest_meadows", "treasurechest_meadows_01", "treasurechest_meadows_02", "treasurechest_meadows_buried", "treasurechest_meadows_combat",
-                "treasurechest_blackforest", "treasurechest_forestcrypt", "treasurechest_forestcrypt_hildir",
-                "treasurechest_swamp", "treasurechest_sunkencrypt",
-                "treasurechest_heath", "treasurechest_heath_hildir", "treasurechest_plains_stone", "treasurechest_plainsfortress_hildir",
-                "treasurechest_mountains", "treasurechest_mountaincave", "treasurechest_mountaincave_hildir",
-                "treasurechest_dvergrtower", "treasurechest_dvergrtown", "treasurechest_dvergr_loose_stone", "treasurechest_fcrypt",
-                "treasurechest_charredfortress", "treasurechest_ashland_stone", "treasurechest_deepnorth_village", "treasurechest_morkhalla", "treasurechest_memorial_buried",
-                "treasurechest_trollcave", "loot_chest_stone", "loot_chest_wood", "stonechest",
-                "shipwreck_karve_chest", "shipwreck_vikingship_chest", "crypt_skeleton_chest", "morkhalla_chestancient"
-            ), "chest.png", "chest_wood", Const("Chest")),
-
-            // DUNGEON ENTRANCES - matched primarily by exact known prefab name
-            // (KnownDungeonEntranceAliases), falling back to component-signature detection
-            // (Teleport+DungeonGenerator, present on every real dungeon-plane entrance) for anything
-            // not in that table, per the request to "look for the portal that teleports the player
-            // to the dungeon plane". The exact-name list exists because TrollCave02/BearCave are
-            // confirmed to carry only a Teleport component (no DungeonGenerator), so the component
-            // check alone would never catch them. Friendly names are looked up by exact prefab name;
-            // anything caught only by the component fallback still gets pinned, just as a generic
-            // "Dungeon Entrance" - nothing is silently dropped.
-            // Component-fallback branch guarded against RadarConfig.IsKnownLocationPrefab so it acts
-            // only as a defense-in-depth net for entrances the curated LocationDefinitions table
-            // doesn't already own (unlisted/modded variants), not a duplicate source for the ones it
-            // does (crypt2/3/4, sunkencrypt4, trollcave02, mountaincave02, the Dvergr entrances).
-            new ResourceRule("Dungeons", () => RadarConfig.Group_FunctionalStructures.Value && RadarConfig.TrackDungeons.Value,
-                (go, n) => IsExactAlias(n, KnownDungeonEntranceAliases) || (!RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<Teleport>() != null && go.GetComponent<DungeonGenerator>() != null),
-                "dungeon.png", null, n => DungeonEntranceNames.TryGetValue(n, out string label) ? label : "Dungeon Entrance"),
-
-            // Player-crafted portals are deliberately NOT pinned - there is no natural equivalent
-            // in vanilla Valheim. The old "Portals" rule (matching any TeleportWorld component or
-            // Contains("portal")) has been removed entirely, along with RadarConfig.TrackPortals.
-
-            // RUNESTONES (fallback only) - every biome runestone carries a RuneStone component, so
-            // this stays component-based, but guarded against RadarConfig.IsKnownLocationPrefab so it
-            // only catches runestones NOT already owned by RadarConfig.LocationDefinitions' Runestones
-            // group (which discovers every biome variant reliably via ZoneSystem) - e.g. unlisted or
-            // modded runestone prefabs.
-            new ResourceRule("Runestones", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackRunestones.Value, (go, n) => !RadarConfig.IsKnownLocationPrefab(n) && go.GetComponent<RuneStone>() != null, "runestone.png"),
-
-            // combatruin01/woodvillage2 have no equivalent in RadarConfig.LocationDefinitions -
-            // everything else this rule used to match (stonetowerruins*, woodhouse1-13, woodfarm1,
-            // woodvillage1, abandonedlogcabin02-04) is now owned by the Ruins & Structures group,
-            // discovered reliably via ZoneSystem instead of this physics-scan fallback.
-            new ResourceRule("AbandonedRuins", () => RadarConfig.Group_RuinsAndLocations.Value && RadarConfig.TrackAbandonedRuins.Value, (go, n) => IsExactAlias(n,
-                "combatruin01", "woodvillage2"
-            ), "ruin.png"),
-
-            // POINTS OF INTEREST
-            new ResourceRule("GreydwarfNest", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGreydwarfNest.Value, (go, n) => IsExactAlias(n, "spawner_greydwarfnest"), "ruin.png", null, Const("Greydwarf Nest")),
-            new ResourceRule("BodyPile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBodyPile.Value, (go, n) => IsExactAlias(n, "spawner_draugrpile"), "ruin.png", null, Const("Body Pile")),
-            new ResourceRule("BonePile", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackBonePile.Value, (go, n) => IsExactAlias(n, "bonepilespawner", "bonepilespawner_swamp"), "ruin.png", null, Const("Bone Pile")),
-            new ResourceRule("Guck", () => RadarConfig.Group_PointsOfInterest.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", null, Const("Guck Sack")),
-
-            // The old "MistlandsPOI" rule (guard towers, lighthouse, harbour, excavation sites,
-            // giant remains, sword markers) has been removed entirely - every alias it matched is now
-            // owned by RadarConfig.LocationDefinitions' Ruins & Structures group ("Dvergr Guard
-            // Tower", "Mistlands Lighthouse", "Mistlands Harbour", "Dvergr Excavation", "Giant
-            // Remains", "Giant Swords"), discovered reliably via ZoneSystem instead of this
-            // physics-scan fallback.
-        };
-
-        // Destruction-fragment/debris pieces (e.g. a boss arena's stone pillars shattering apart on
-        // death - see BatchScanner's scan-volume fix, which is what let a burst of these get recorded
-        // as persistent "AbandonedRuins"/"StoneRings" pins in the first place) are never legitimate
-        // resources or creatures in their own right. Rejected purely by name, before any other check,
-        // regardless of category - a curated whitelist of exact prefab names would be more precise,
-        // but Valheim's shatter system generates these dynamically, so there's no fixed list to match.
-        private static readonly string[] DebrisNameMarkers = { "_frac", "debris", "rubble", "fragment", "_piece", "_chip" };
-
-        // Dungeon/cave interiors (crypts, sunken crypts, dvergr forts, mountain caves, ...) are
-        // generated at a large, fixed vertical offset from the real terrain at their entrance's X/Z -
-        // "high in the sky" or "underground" relative to the actual ground - so their objects have no
-        // sensible position on the 2D minimap and just show up confusingly stacked on whatever is
-        // really at that spot on the surface. Generous enough that real terrain variance (cliffs,
-        // mountain peaks) directly above/below a point is never mistaken for a dungeon interior -
-        // genuine dungeon-generation offsets are far larger than that.
-        private const float DungeonHeightOffsetThreshold = 40f;
-
-        public static bool ShouldPinGameObject(GameObject go, string nameLower, out string displayName, out Sprite icon, out bool isPersistent, out string categoryKey)
-        {
-            displayName = string.Empty;
-            icon = null;
-            isPersistent = false;
-            categoryKey = null;
-
-            if (ContainsAny(nameLower, DebrisNameMarkers)) return false;
-            if (IsInsideDungeonInterior(go.transform.position)) return false;
-
-            Character character = go.GetComponent<Character>();
-
-            HoverText hover = go.GetComponent<HoverText>();
-            if (hover != null && !string.IsNullOrEmpty(hover.m_text))
-            {
-                displayName = hover.m_text;
-            }
-            else if (character != null)
-            {
-                displayName = character.GetHoverName();
-            }
-
-            if (string.IsNullOrEmpty(displayName))
-            {
-                displayName = go.name;
-            }
-
-            displayName = FormatHumanFriendlyName(displayName);
-
-            // CREATURES (Character-based - includes regular creatures and bosses, both matched via
-            // the same exact-alias RadarConfig.AliasLookup)
-            if (RadarConfig.Group_Creatures.Value && character != null && !character.IsDead() && !character.IsPlayer())
-            {
-                int starLevel = Math.Max(0, character.GetLevel() - 1);
-
-                RadarConfig.CreatureConfigEntry specific = FindCreatureOverride(nameLower, out string specificKey);
-                bool enabled;
-                int minStars;
-                bool isMonsterIcon;
-                string candidateCategoryKey;
-
-                if (specific != null)
-                {
-                    enabled = specific.Enabled.Value;
-                    minStars = specific.MinStars.Value;
-                    isMonsterIcon = specific.IsMonster;
-                    candidateCategoryKey = $"creature:{specificKey}";
-                }
-                else if (IsHostileMonster(character))
-                {
-                    enabled = RadarConfig.EnableMonsters.Value;
-                    minStars = RadarConfig.MinMonsterStars.Value;
-                    isMonsterIcon = true;
-                    candidateCategoryKey = "creature:_monster";
-                }
-                else if (IsPassiveAnimal(character))
-                {
-                    enabled = RadarConfig.EnableAnimals.Value;
-                    minStars = RadarConfig.MinAnimalStars.Value;
-                    isMonsterIcon = false;
-                    candidateCategoryKey = "creature:_animal";
-                }
-                else
-                {
-                    enabled = false;
-                    minStars = 0;
-                    isMonsterIcon = false;
-                    candidateCategoryKey = null;
-                }
-
-                if (enabled && starLevel >= minStars)
-                {
-                    if (starLevel > 0) displayName += $" ({new string('★', starLevel)})";
-
-                    // Symmetric with resources (rule.VanillaIcon): pass the matched species'
-                    // verified trophy sprite name explicitly instead of letting PinManager
-                    // re-derive a lookup key from the raw prefab name - that mismatch (e.g.
-                    // "bjorn" vs a dict keyed "bear") is exactly what made Bear's icon (and its
-                    // classification) silently fail before.
-                    string vanillaIcon = specificKey != null ? VanillaIconResolver.GetCreatureTrophySprite(specificKey) : null;
-                    icon = PinManager.ResolvePerObjectPin(nameLower, isMonsterIcon ? "monster.png" : "animal.png", vanillaIcon);
-                    categoryKey = candidateCategoryKey;
-                    return true;
-                }
-            }
-
-            // FISH - Fish prefabs have no Character/Humanoid component at all (just Fish+ItemDrop),
-            // so they never reach the branch above - critically, they also have no HoverText/
-            // Character.GetHoverName() to fall back on, so the generic displayName fallback further
-            // up (go.name -> FormatHumanFriendlyName) produces the raw prefab name ("Fish1", "Fish2",
-            // ...) rather than a real species name. Matched via the same exact-alias AliasLookup as
-            // regular creatures, gated by the same Group_Creatures toggle, but the label always comes
-            // from the matched CreatureDefinition's own DisplayName ("Perch", "Pike", ...) instead of
-            // anything formatted from the raw name. No star-level concept for fish (they don't have
-            // Character.GetLevel()).
-            if (character == null && RadarConfig.Group_Creatures.Value && go.GetComponent<Fish>() != null)
-            {
-                if (!string.IsNullOrEmpty(nameLower) && RadarConfig.AliasLookup.TryGetValue(nameLower, out var fishDef) &&
-                    RadarConfig.Creatures.TryGetValue(fishDef.CanonicalKey, out var fishEntry) && fishEntry.Enabled.Value)
-                {
-                    displayName = fishDef.DisplayName;
-                    icon = PinManager.ResolvePerObjectPin(nameLower, "animal.png", VanillaIconResolver.GetCreatureTrophySprite(fishDef.CanonicalKey));
-                    categoryKey = $"creature:{fishDef.CanonicalKey}";
-                    return true;
-                }
-
-                return false;
-            }
-
-            // LEVIATHAN - the giant ocean turtle-shell structure players commonly call a "kraken"
-            // (Valheim has no creature literally named that). Not a Character (no AI, not directly
-            // attackable) and not a Fish - it carries its own "Leviathan" + MineRock components, so
-            // it needs its own branch. Treated as transient like a creature (re-scanned each tick,
-            // never persisted to disk) since it slowly swims/dives rather than staying fixed in
-            // place like a real resource deposit.
-            if (character == null && RadarConfig.Group_Creatures.Value && go.GetComponent<Leviathan>() != null)
-            {
-                if (!string.IsNullOrEmpty(nameLower) && RadarConfig.AliasLookup.TryGetValue(nameLower, out var leviathanDef) &&
-                    RadarConfig.Creatures.TryGetValue(leviathanDef.CanonicalKey, out var leviathanEntry) && leviathanEntry.Enabled.Value)
-                {
-                    displayName = leviathanDef.DisplayName;
-                    icon = PinManager.ResolvePerObjectPin(nameLower, "animal.png", VanillaIconResolver.GetCreatureTrophySprite(leviathanDef.CanonicalKey));
-                    categoryKey = $"creature:{leviathanDef.CanonicalKey}";
-                    return true;
-                }
-
-                return false;
-            }
-
-            // RESOURCES & STRUCTURES (berries through ruins/locations) - these are stationary, so
-            // their pins persist on the minimap even after the player leaves scan range.
-            //
-            // Matched (and recorded into PinManager's raw point store) regardless of whether the
-            // category's own toggle is currently on - only IsCategoryEnabled (checked later, at pin
-            // render time) decides whether a match actually gets a visible pin. This way a category
-            // that's been off since before an area was ever scanned still gets its raw points
-            // recorded while the player walks through, so flipping the toggle on later immediately
-            // populates the map from ground already covered instead of requiring a re-scan.
-            foreach (var rule in ResourceRules)
-            {
-                if (rule.Matches(go, nameLower))
-                {
-                    if (rule.DisplayNameOverride != null) displayName = rule.DisplayNameOverride(nameLower);
-                    icon = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng, rule.VanillaIcon);
-                    isPersistent = true;
-                    categoryKey = $"resource:{rule.Id}";
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        // Re-derives whether a category (identified by the categoryKey produced above) is currently
-        // enabled purely from live config, without needing the original GameObject - used to redraw or
-        // hide already-placed pins when a toggle changes, and to reconstruct pins loaded from disk.
+        // Re-derives whether a category (identified by the categoryKey a scanner's TryClassify
+        // produced) is currently enabled purely from live config, without needing the original
+        // GameObject.
         public static bool IsCategoryEnabled(string categoryKey)
         {
             if (string.IsNullOrEmpty(categoryKey)) return false;
 
-            if (categoryKey.StartsWith("creature:"))
-            {
-                if (!RadarConfig.Group_Creatures.Value) return false;
-
-                string sub = categoryKey.Substring("creature:".Length);
-                if (sub == "_monster") return RadarConfig.EnableMonsters.Value;
-                if (sub == "_animal") return RadarConfig.EnableAnimals.Value;
-                return RadarConfig.Creatures.TryGetValue(sub, out var entry) && entry.Enabled.Value;
-            }
+            if (categoryKey.StartsWith("creature:")) return CreatureEvaluator.IsEnabled(categoryKey);
 
             if (categoryKey.StartsWith("resource:"))
             {
                 string id = categoryKey.Substring("resource:".Length);
-                foreach (var rule in ResourceRules)
-                {
-                    if (rule.Id == id) return rule.Enabled();
-                }
+                if (ResourceEvaluator.TryGetRule(id, out var resourceRule)) return resourceRule.Enabled();
+                if (PoiEvaluator.TryGetRule(id, out var poiRule)) return poiRule.Enabled();
                 return false;
             }
 
@@ -439,9 +47,9 @@ namespace ValheimRadar
             return false;
         }
 
-        // Only resource/structure and location categories are persisted to disk (see PinManager), so
-        // this only needs to resolve icons for "resource:"/"location:" keys - used to re-resolve the
-        // icon Sprite after loading cached pin positions from a previous session.
+        // Only resource/POI and location categories are persisted to disk (see PinManager), so this
+        // only needs to resolve icons for "resource:"/"location:" keys - used to re-resolve the icon
+        // Sprite after loading cached pin positions from a previous session.
         public static string GetDefaultIconForCategory(string categoryKey)
         {
             if (string.IsNullOrEmpty(categoryKey)) return null;
@@ -449,17 +57,14 @@ namespace ValheimRadar
             if (!categoryKey.StartsWith("resource:")) return null;
 
             string id = categoryKey.Substring("resource:".Length);
-            foreach (var rule in ResourceRules)
-            {
-                if (rule.Id == id) return rule.IconPng;
-            }
-
+            if (ResourceEvaluator.TryGetRule(id, out var resourceRule)) return resourceRule.IconPng;
+            if (PoiEvaluator.TryGetRule(id, out var poiRule)) return poiRule.IconPng;
             return null;
         }
 
         // Companion to GetDefaultIconForCategory - resolves the same rule's verified vanilla icon
-        // sprite name (see ResourceRule.VanillaIcon), so pins reloaded from disk after a relog get
-        // the same per-type icon as freshly-scanned ones instead of only the category PNG/fallback.
+        // sprite name, so pins reloaded from disk after a relog get the same per-type icon as
+        // freshly-scanned ones instead of only the category PNG/fallback.
         public static string GetVanillaIconForCategory(string categoryKey)
         {
             if (string.IsNullOrEmpty(categoryKey)) return null;
@@ -467,100 +72,9 @@ namespace ValheimRadar
             if (!categoryKey.StartsWith("resource:")) return null;
 
             string id = categoryKey.Substring("resource:".Length);
-            foreach (var rule in ResourceRules)
-            {
-                if (rule.Id == id) return rule.VanillaIcon;
-            }
-
+            if (ResourceEvaluator.TryGetRule(id, out var resourceRule)) return resourceRule.VanillaIcon;
+            if (PoiEvaluator.TryGetRule(id, out var poiRule)) return poiRule.VanillaIcon;
             return null;
-        }
-
-        // Exact-alias lookup against the cleaned prefab name - see RadarConfig.AliasLookup. Flat
-        // dictionary means no ordering requirement, unlike the old Contains()-based scan (a variant
-        // like "greydwarf_elite" no longer needs to be declared before "greydwarf").
-        internal static RadarConfig.CreatureConfigEntry FindCreatureOverride(string nameLower, out string matchedKey)
-        {
-            if (!string.IsNullOrEmpty(nameLower) &&
-                RadarConfig.AliasLookup.TryGetValue(nameLower, out var def) &&
-                RadarConfig.Creatures.TryGetValue(def.CanonicalKey, out var entry))
-            {
-                matchedKey = def.CanonicalKey;
-                return entry;
-            }
-
-            matchedKey = null;
-            return null;
-        }
-
-        internal static bool ContainsAny(string value, string[] markers)
-        {
-            foreach (var marker in markers)
-            {
-                if (value.Contains(marker)) return true;
-            }
-
-            return false;
-        }
-
-        private static bool IsInsideDungeonInterior(Vector3 position)
-        {
-            if (ZoneSystem.instance == null) return false;
-            if (!ZoneSystem.instance.GetGroundHeight(position, out float groundHeight)) return false;
-
-            return Mathf.Abs(position.y - groundHeight) > DungeonHeightOffsetThreshold;
-        }
-
-        private static bool IsPassiveAnimal(Character character)
-        {
-            if (character == null) return false;
-            if (character.IsTamed()) return true;
-            if (character.m_faction == Character.Faction.AnimalsVeg) return true;
-            if (character.m_faction == Character.Faction.PlayerSpawned) return true;
-
-            BaseAI ai = character.GetBaseAI();
-            if (ai != null && ai.m_passiveAggresive) return true;
-
-            return false;
-        }
-
-        private static bool IsHostileMonster(Character character)
-        {
-            if (character == null || character.IsTamed()) return false;
-            if (IsPassiveAnimal(character)) return false;
-
-            if (Player.m_localPlayer != null)
-            {
-                return BaseAI.IsEnemy(Player.m_localPlayer, character);
-            }
-
-            return character.IsMonsterFaction(Time.time);
-        }
-
-        /// <summary>
-        /// Strips known engine/asset prefixes and the "(Clone)" instantiation suffix from a raw
-        /// Unity object name. Used for display-name formatting and the icon-cache/PNG-override key
-        /// (see <see cref="PinManager.ResolvePerObjectPin"/>) - NOT for whitelist match decisions
-        /// (see <see cref="IsExactAlias"/>), since stripping "piece_" here is exactly what could make
-        /// a player-built object collide with an unrelated natural one of the same base name.
-        /// </summary>
-        public static string StripKnownPrefixes(string rawName)
-        {
-            if (string.IsNullOrEmpty(rawName)) return string.Empty;
-
-            string clean = Regex.Replace(rawName, @"(?i)^(pickable_|item_|piece_|vfx_|sfx_)", "");
-            return clean.Replace("(Clone)", "").Trim();
-        }
-
-        internal static string FormatHumanFriendlyName(string rawName)
-        {
-            if (string.IsNullOrEmpty(rawName)) return string.Empty;
-
-            string clean = StripKnownPrefixes(rawName);
-            clean = clean.Replace('_', ' ');
-            clean = Regex.Replace(clean, @"(?<=[a-z])(?=[A-Z])", " ");
-            clean = CultureInfo.CurrentCulture.TextInfo.ToTitleCase(clean.ToLower());
-
-            return clean;
         }
     }
 }

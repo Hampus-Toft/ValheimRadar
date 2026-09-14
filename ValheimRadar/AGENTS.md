@@ -14,7 +14,7 @@ This document defines operating guidelines, safety boundaries, and workflows for
 ## Safety & Modification Boundaries
 
 - **Do NOT** change the `ValheimRadar` namespace or break module boundaries.
-- **Do NOT** move scanning logic back into `RadarPlugin.cs`. Keep evaluation in `ObjectEvaluator` and clustering in `ClusteringEngine`.
+- **Do NOT** move scanning logic back into `RadarPlugin.cs`. Keep classification in the relevant type-specific evaluator (`CreatureEvaluator`/`ResourceEvaluator`/`PoiEvaluator`) and clustering in `ClusteringEngine`. `ObjectEvaluator` is only a thin dispatcher (categoryKey -> enabled-state/icon) shared by `PinManager`/`RadarPlugin` - don't add matching rules to it directly.
 - **Do NOT** hardcode absolute file paths. Always use relative paths or BepInEx utilities like `Paths.ConfigPath`.
 - **Do NOT** create persistent static state that leaks memory across server reconnects or world reloads.
 
@@ -25,9 +25,22 @@ This document defines operating guidelines, safety boundaries, and workflows for
 ### Playbook 1: Adding a New Trackable Resource/Entity
 
 1. **Add Config Entry:** Add a `ConfigEntry<bool>` in `Configuration/RadarConfig.cs` under the appropriate master group section.
-2. **Update Evaluation Logic:** In `Scanning/ObjectEvaluator.cs`:
-   - Match the prefab or clean entity name (`nameLower`).
-   - Assign the appropriate `displayName` and default PNG fallback icon.
+2. **Pick the right type/file** - ValheimRadar tracks three distinct kinds of content, each with its
+   own scanner and evaluator (see `Scanning/`):
+   - **Type #1 - ephemeral** (creatures, fish, the Leviathan): add a rule/alias to
+     `Scanning/CreatureEvaluator.cs` (or `RadarConfig.CreatureDefinitions`). Scanned fresh every
+     discovery tick via `CreatureScanner` - never persisted to disk.
+   - **Type #2 - semi-permanent resources** (trees/ores/berries/ground pickables, wild beehives):
+     add a `ResourceRule` to `Scanning/ResourceEvaluator.cs`. Scanned once per map cell, ever, via
+     `ResourceScanner`, then persisted forever in `PinManager`'s raw point store.
+   - **Type #3 - points of interest** (dungeons, boss altars, runestones, villages, ruins,
+     chests, the trader): prefer adding a `LocationDefinition` to `RadarConfig.cs` (discovered
+     cheaply via `Scanning/LocationScanner.cs`'s ZoneSystem query) when the object is a proper
+     Location; only add a `PoiRule` to `Scanning/PoiEvaluator.cs` (physics-scan fallback, via
+     `PoiScanner`) for POI-shaped objects with their own `ZNetView` that ZoneSystem doesn't expose
+     as a Location.
+   - Match the prefab or clean entity name (`nameLower`) using exact aliases, not substrings.
+   - Assign the appropriate `displayName` (or `DisplayNameOverride`) and default PNG fallback icon.
 3. **Verify Build:** Run `dotnet build` to ensure no compiler errors.
 
 ### Playbook 2: Modifying Clustering Logic

@@ -355,6 +355,7 @@ namespace ValheimRadar
         public static ConfigEntry<float> UpdateInterval;
         public static ConfigEntry<float> ClusterDistance;
         public static ConfigEntry<int> ScanBatchCount;
+        public static ConfigEntry<int> PermanentScanCellsPerTick;
         public static ConfigEntry<float> LocationScanInterval;
 
         // Master Group Toggles
@@ -448,7 +449,8 @@ namespace ValheimRadar
             ScanRadius = Bind(config, "1 - General", "ScanRadius", 100f, "Scan radius around player.", new AcceptableValueRange<float>(10f, 300f));
             UpdateInterval = Bind(config, "1 - General", "UpdateInterval", 1.0f, "Scan interval in seconds.", new AcceptableValueRange<float>(0.1f, 10f));
             ClusterDistance = Bind(config, "1 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
-            ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make newly-appearing/moving objects take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
+            ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
+            PermanentScanCellsPerTick = Bind(config, "1 - General", "PermanentScanCellsPerTick", 3, "Resources & points of interest only: how many never-before-scanned map cells to physically scan per update tick. Unlike creatures, resources/POI don't move - once a cell has been scanned it's never scanned again this session, so this only bounds how fast newly-explored ground gets covered (higher = faster discovery of new areas, but more Physics cost on ticks where a lot of new ground just came into range).", new AcceptableValueRange<int>(1, 20));
             LocationScanInterval = Bind(config, "1 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
 
             Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
