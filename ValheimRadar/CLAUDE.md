@@ -28,30 +28,39 @@ places clustered pins on the in-game Minimap.
 
 ## Architecture & File Structure
 
-All code resides within the `ValheimRadar` root namespace.
+All code resides within the `ValheimRadar` root namespace. `Scanning/` tracks three distinct
+kinds of content, each with its own evaluator + scanner pair, plus shared helpers so none of
+the three need to depend on each other:
 
 ```text
 ValheimRadar/
 ├── Configuration/
-│   └── RadarConfig.cs         # ConfigEntry bindings, CreatureDefinition/LocationDefinition tables, master toggles
+│   └── RadarConfig.cs           # ConfigEntry bindings, CreatureDefinition/LocationDefinition tables, master toggles
 ├── Models/
-│   ├── ItemCluster.cs         # Centroid, label, and cluster key computation
-│   ├── TrackedItem.cs         # DTO representing a scanned creature/resource (ZDOID, Position, Icon)
-│   └── TrackedLocation.cs     # DTO representing a scanned world Location/POI
+│   ├── ItemCluster.cs           # Centroid, label, and cluster key computation
+│   ├── TrackedItem.cs           # DTO representing a scanned creature/resource/POI (ZDOID, Position, Icon)
+│   └── TrackedLocation.cs       # DTO representing a scanned world Location/POI (no ZDOID)
 ├── Pinning/
-│   ├── IconLoader.cs          # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
-│   ├── VanillaIconResolver.cs # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
-│   └── PinManager.cs          # Minimap pin sync, updates, removals, and icon resolution order
+│   ├── IconLoader.cs            # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
+│   ├── VanillaIconResolver.cs   # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
+│   └── PinManager.cs            # Minimap pin sync, updates, removals, and icon resolution order
 ├── Scanning/
-│   ├── ClusteringEngine.cs    # Spatial distance-based point-clustering logic
-│   ├── ObjectEvaluator.cs     # Creature/resource classification, star rating parsing, and filtering
-│   ├── BatchScanner.cs        # Incremental/batched scene scan for creatures & resources
-│   └── LocationScanner.cs     # ZoneSystem.LocationInstance-based scan for world Locations/POIs
-├── docs/ICONS.md              # Icon resolution order & override naming
-├── Thunderstore/               # ThunderstorePack packaging assets (manifest template, Pack.ps1, README, icon)
-└── RadarPlugin.cs             # Plugin lifecycle, update loop, and overlap scanning
+│   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
+│   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
+│   ├── NameFormatting.cs          # Shared name/display-text helpers (exact-alias matching, title-casing, prefix stripping)
+│   ├── ScanFilters.cs             # Shared pre-filter (debris names, dungeon-interior objects) applied before any evaluator
+│   ├── ScanGeometry.cs            # Shared Physics.OverlapBox cell geometry/query + ScanCellKey
+│   ├── SpatialCellScanner.cs      # Rotating per-cell cache scanner - Type #1 (ephemeral: creatures)
+│   ├── PermanentSpatialScanner.cs # "Scan each cell once, ever" scanner - Types #2/#3 (semi-permanent: resources/physics-POI)
+│   ├── CreatureEvaluator.cs + CreatureScanner.cs   # Type #1: creatures/fish/Leviathan
+│   ├── ResourceEvaluator.cs + ResourceScanner.cs   # Type #2: trees/ores/berries/ground pickables
+│   ├── PoiEvaluator.cs + PoiScanner.cs             # Type #3: physics-detected POI fallback
+│   └── LocationScanner.cs         # Type #3 (preferred): ZoneSystem.GetLocationList()-based POI discovery (dungeons, altars, ruins, etc.)
+├── docs/ICONS.md                  # Icon resolution order & override naming
+├── Thunderstore/                  # ThunderstorePack packaging assets (manifest template, Pack.ps1, README, icon)
+└── RadarPlugin.cs                 # Plugin lifecycle, update loop, and per-scanner Reset()/scan orchestration
 
-ValheimRadar.Tests/            # xunit tests mirroring the folders above (Models/, Pinning/, Scanning/)
+ValheimRadar.Tests/                # xunit tests mirroring the folders above (Models/, Pinning/, Scanning/)
 ```
 
 See `AGENTS.md` for build gotchas, safety boundaries, and step-by-step playbooks.

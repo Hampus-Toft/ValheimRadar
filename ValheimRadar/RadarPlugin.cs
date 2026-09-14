@@ -11,7 +11,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.6.0";
+        public const string PluginVersion = "1.7.0";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
@@ -38,7 +38,9 @@ namespace ValheimRadar
             PinManager.SaveWorldPins(currentWorldName);
             PinManager.SaveLocationPins(currentWorldName);
             PinManager.ClearAllPins();
-            BatchScanner.Reset();
+            CreatureScanner.Reset();
+            ResourceScanner.Reset();
+            PoiScanner.Reset();
             LocationScanner.Reset();
         }
 
@@ -50,9 +52,12 @@ namespace ValheimRadar
             // for the player to walk back into scan range.
             PinManager.RefreshCategoryVisibility(Minimap.instance);
 
-            // Any config change (ScanRadius/ScanBatchCount especially) can invalidate the current
-            // batch rotation, so drop it and let ScanBatch rebuild cleanly from the next tick.
-            BatchScanner.Reset();
+            // Only the creature scanner's rotation cache is reset here (ScanRadius/ScanBatchCount
+            // especially can invalidate it). ResourceScanner/PoiScanner deliberately do NOT reset on
+            // config changes - their "scan each cell once, ever" model (see
+            // PermanentSpatialScanner) means already-explored ground stays valid regardless of
+            // toggles, and resetting them here would force wastefully re-scanning it.
+            CreatureScanner.Reset();
         }
 
         private void Update()
@@ -67,7 +72,9 @@ namespace ValheimRadar
                     PinManager.SaveWorldPins(currentWorldName);
                     PinManager.SaveLocationPins(currentWorldName);
                     PinManager.ClearAllPins();
-                    BatchScanner.Reset();
+                    CreatureScanner.Reset();
+                    ResourceScanner.Reset();
+                    PoiScanner.Reset();
                     LocationScanner.Reset();
                     wasActive = false;
                     currentWorldName = null;
@@ -120,32 +127,35 @@ namespace ValheimRadar
         private void ScanAndPinObjects(Minimap minimap)
         {
             Vector3 playerPos = Player.m_localPlayer.transform.position;
+            float scanRadius = RadarConfig.ScanRadius.Value;
 
-            // Only a rotating slice of the scan area's cells is physically re-queried this tick - see
-            // BatchScanner. detectedItems is the combined (cached + freshly-scanned) set for every
-            // cell currently in range, so it always represents the full radius, just not all of it
-            // freshly re-scanned on every single tick.
-            List<TrackedItem> detectedItems = BatchScanner.ScanBatch(playerPos, RadarConfig.ScanRadius.Value, RadarConfig.ScanBatchCount.Value);
+            // Type #1 (ephemeral) - creatures/fish/Leviathan move, so the active radius is
+            // re-evaluated (via a rotating per-cell cache - see CreatureScanner/SpatialCellScanner)
+            // and fully reclustered every discovery tick. The clustering/pin-diff work this involves
+            // only ever touches this tick's in-range detections though - bounded by ScanRadius, not
+            // any ever-growing discovery history - so redoing it in full each tick stays cheap.
+            List<TrackedItem> creatures = CreatureScanner.ScanBatch(playerPos, scanRadius, RadarConfig.ScanBatchCount.Value);
+            List<ItemCluster> creatureClusters = ClusteringEngine.ClusterItems(creatures, ClusterDistance);
+            PinManager.SyncTransientClusters(minimap, creatureClusters);
 
-            List<TrackedItem> transientItems = new List<TrackedItem>();
-            foreach (var item in detectedItems)
-            {
-                if (!item.IsPersistent) transientItems.Add(item);
-            }
+            // Type #2/#3 (semi-permanent) - resources and physics-detected points of interest don't
+            // move, so each scanner only ever physically queries map cells it has never scanned
+            // before (see ResourceScanner/PoiScanner/PermanentSpatialScanner) and returns just this
+            // tick's newly-discovered points, if any. Those merge into the durable raw store and are
+            // clustered incrementally - only newly-discovered points touch existing clusters, so a
+            // session's full discovery history never gets reclustered from scratch on a normal tick
+            // (a ClusterDistance change is handled separately - see PinManager.RecordRawPoints). Pin
+            // updates are then pushed only for whatever clusters actually changed - on most ticks,
+            // once the local area is fully explored, that's nothing at all.
+            List<TrackedItem> newResources = ResourceScanner.ScanNewCells(playerPos, scanRadius, RadarConfig.PermanentScanCellsPerTick.Value);
+            List<TrackedItem> newPoi = PoiScanner.ScanNewCells(playerPos, scanRadius, RadarConfig.PermanentScanCellsPerTick.Value);
 
-            // Persistent (resource/structure) points merge into the durable raw store and are
-            // clustered incrementally here - only newly-discovered points touch existing clusters, so
-            // a session's full discovery history never gets reclustered from scratch on a normal tick
-            // (a ClusterDistance change is handled separately - see RecordRawPoints). Pin updates are
-            // then pushed only for whatever clusters actually changed.
-            PinManager.RecordRawPoints(detectedItems, ClusterDistance);
+            // Called unconditionally, even with an empty list - RecordRawPoints also checks every
+            // call for a ClusterDistance config change and triggers a full recluster if so, which
+            // must keep happening on a fully-explored map (no new cells left to scan) too.
+            PinManager.RecordRawPoints(newResources, ClusterDistance);
+            PinManager.RecordRawPoints(newPoi, ClusterDistance);
             PinManager.SyncPersistentClusters(minimap);
-
-            // Transient (creature) clusters are still fully rebuilt every tick, but the input here is
-            // just this tick's in-range detections - bounded by ScanRadius, not the ever-growing
-            // discovery history - so redoing it in full stays cheap.
-            List<ItemCluster> transientClusters = ClusteringEngine.ClusterItems(transientItems, ClusterDistance);
-            PinManager.SyncTransientClusters(minimap, transientClusters);
         }
     }
 }
