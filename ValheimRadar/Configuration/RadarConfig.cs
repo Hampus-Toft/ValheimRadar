@@ -33,7 +33,13 @@ namespace ValheimRadar
             public readonly bool IsMonster;
             public readonly bool DefaultEnabled;
 
-            public CreatureDefinition(string canonicalKey, string[] aliases, string displayName, string section, bool isMonster, bool defaultEnabled = true)
+            // Only tameable species (Boar, Wolf, Lox) keep a per-species Min Stars filter - see
+            // CreatureConfigEntry.MinStars. Every other creature still displays its rolled star
+            // level in the pin label, but can no longer be filtered by it (a 2-star Greyling is
+            // exactly as dangerous/relevant as a 0-star one from a scouting perspective).
+            public readonly bool Tameable;
+
+            public CreatureDefinition(string canonicalKey, string[] aliases, string displayName, string section, bool isMonster, bool defaultEnabled = true, bool tameable = false)
             {
                 CanonicalKey = canonicalKey;
                 Aliases = aliases;
@@ -41,6 +47,7 @@ namespace ValheimRadar
                 Section = section;
                 IsMonster = isMonster;
                 DefaultEnabled = defaultEnabled;
+                Tameable = tameable;
             }
         }
 
@@ -48,6 +55,11 @@ namespace ValheimRadar
         {
             public bool IsMonster;
             public ConfigEntry<bool> Enabled;
+
+            // Null for every non-tameable creature (see CreatureDefinition.Tameable) - not bound at
+            // all, so no Min Stars entry appears in the config UI for them. CreatureEvaluator treats
+            // a null MinStars as "no filtering" (0), while the rolled star level is still appended
+            // to the pin's display name regardless.
             public ConfigEntry<int> MinStars;
         }
 
@@ -75,8 +87,14 @@ namespace ValheimRadar
             public readonly string VanillaIcon;
             public readonly bool DefaultEnabled;
 
+            // True only for the Start Temple and the Black Forest Trader - these are always pinned
+            // unconditionally (no group/section, no Enabled ConfigEntry bound at all - see the
+            // Locations.Clear() loop in Initialize and LocationScanner.IsLocationCategoryEnabled),
+            // since they're each unique-per-world landmarks players always want visible.
+            public readonly bool AlwaysEnabled;
+
             public LocationDefinition(string canonicalKey, string[] prefabNames, string displayName, string section,
-                LocationGroup group, string iconPng, string vanillaIcon = null, bool defaultEnabled = true)
+                LocationGroup group, string iconPng, string vanillaIcon = null, bool defaultEnabled = true, bool alwaysEnabled = false)
             {
                 CanonicalKey = canonicalKey;
                 PrefabNames = prefabNames;
@@ -86,6 +104,7 @@ namespace ValheimRadar
                 IconPng = iconPng;
                 VanillaIcon = vanillaIcon;
                 DefaultEnabled = defaultEnabled;
+                AlwaysEnabled = alwaysEnabled;
             }
         }
 
@@ -103,16 +122,20 @@ namespace ValheimRadar
         private const string SecBosses = "3b - Bosses & Notable Creatures";
         private const string SecFish = "9b - Creatures (Fish)";
 
-        private const string SecBossLocations = "18 - Locations (Boss Altars)";
-        private const string SecLandmarkLocations = "19 - Locations (Landmarks)";
-        private const string SecDungeonLocations = "20 - Locations (Dungeon Entrances)";
-        private const string SecRunestoneLocations = "21 - Locations (Runestones)";
-        private const string SecRuinLocations = "22 - Locations (Ruins & Structures)";
+        // Section 19 ("Locations (Landmarks)") was removed - the Start Temple and Black Forest
+        // Trader are now always shown unconditionally (see LocationDefinition.AlwaysEnabled) rather
+        // than gated by their own barely-used toggle group, so remaining Location sections were
+        // renumbered down to close the gap.
+        private const string SecBossLocations = "17 - Locations (Boss Altars)";
+        private const string SecDungeonLocations = "18 - Locations (Dungeon Entrances)";
+        private const string SecRunestoneLocations = "19 - Locations (Runestones)";
+        private const string SecRuinLocations = "20 - Locations (Ruins & Structures)";
+        private const string SecSpawnersAndLandmarks = "16 - Spawners & Landmarks";
 
         public static readonly CreatureDefinition[] CreatureDefinitions =
         {
             // MEADOWS
-            new CreatureDefinition("boar", new[] { "boar" }, "Boar", SecMeadows, isMonster: false),
+            new CreatureDefinition("boar", new[] { "boar" }, "Boar", SecMeadows, isMonster: false, tameable: true),
             new CreatureDefinition("neck", new[] { "neck" }, "Neck", SecMeadows, isMonster: false),
             new CreatureDefinition("deer", new[] { "deer", "deer_white" }, "Deer", SecMeadows, isMonster: false),
             new CreatureDefinition("greyling", new[] { "greyling" }, "Greyling", SecMeadows, isMonster: true),
@@ -134,7 +157,7 @@ namespace ValheimRadar
             new CreatureDefinition("abomination", new[] { "abomination" }, "Abomination", SecSwamp, isMonster: true),
 
             // MOUNTAIN
-            new CreatureDefinition("wolf", new[] { "wolf", "wolf_cub", "wolf_spiritcaller" }, "Wolf", SecMountain, isMonster: true),
+            new CreatureDefinition("wolf", new[] { "wolf", "wolf_cub", "wolf_spiritcaller" }, "Wolf", SecMountain, isMonster: true, tameable: true),
             // Real prefab is "Bjorn" - "bear" never appears in it, which is why Bear silently
             // failed classification (and therefore its icon) entirely under the old
             // nameLower.Contains("bear") substring check. Bjorn_ragdoll (corpse) is deliberately
@@ -146,7 +169,7 @@ namespace ValheimRadar
             new CreatureDefinition("drake", new[] { "hatchling" }, "Drake", SecMountain, isMonster: true),
 
             // PLAINS
-            new CreatureDefinition("lox", new[] { "lox", "lox_calf" }, "Lox", SecPlains, isMonster: false),
+            new CreatureDefinition("lox", new[] { "lox", "lox_calf" }, "Lox", SecPlains, isMonster: false, tameable: true),
             new CreatureDefinition("deathsquito", new[] { "deathsquito" }, "Deathsquito", SecPlains, isMonster: true),
             // Real prefabs use "Goblin*" naming (loca resolves to "Fuling*") - "fuling"/
             // "fuling_berserker"/"fuling_shaman" are not real prefab names, which is why none of
@@ -238,9 +261,12 @@ namespace ValheimRadar
             new LocationDefinition("boss_yagluth", new[] { "goblinking" }, "Yagluth Altar", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophyGoblinKing"),
             new LocationDefinition("boss_queen", new[] { "mistlands_dvergrbossentrance1" }, "Queen Entrance", SecBossLocations, LocationGroup.BossAltar, "boss_altar.png", "TrophySeekerQueen"),
 
-            // LANDMARKS
-            new LocationDefinition("landmark_starttemple", new[] { "starttemple" }, "Start Temple", SecLandmarkLocations, LocationGroup.Landmark, "landmark.png"),
-            new LocationDefinition("landmark_trader", new[] { "vendor_blackforest" }, "Black Forest Trader", SecLandmarkLocations, LocationGroup.Landmark, "landmark.png"),
+            // LANDMARKS - always shown unconditionally (AlwaysEnabled), not gated by any group/
+            // toggle and not bound as a config entry at all (see Locations.Clear() loop below and
+            // LocationScanner.IsLocationCategoryEnabled) - these are unique-per-world landmarks
+            // players always want visible on the map.
+            new LocationDefinition("landmark_starttemple", new[] { "starttemple" }, "Start Temple", "Always Shown", LocationGroup.Landmark, "landmark.png", alwaysEnabled: true),
+            new LocationDefinition("landmark_trader", new[] { "vendor_blackforest" }, "Black Forest Trader", "Always Shown", LocationGroup.Landmark, "landmark.png", alwaysEnabled: true),
 
             // DUNGEON ENTRANCES
             new LocationDefinition("dungeon_blackforestcrypt", new[] { "crypt2", "crypt3", "crypt4" }, "Black Forest Dungeon", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
@@ -337,12 +363,16 @@ namespace ValheimRadar
         public static bool IsKnownLocationPrefab(string nameLower) =>
             !string.IsNullOrEmpty(nameLower) && LocationPrefabLookup.ContainsKey(nameLower);
 
+        // Not called for AlwaysEnabled Locations (Start Temple/Trader) - LocationScanner.
+        // IsLocationCategoryEnabled checks AlwaysEnabled first and never reaches this method for
+        // them, so the LocationGroup.Landmark case below always returning true is effectively
+        // unreachable, kept only so the switch stays exhaustive over every LocationGroup value.
         public static bool IsLocationGroupEnabled(LocationGroup group)
         {
             switch (group)
             {
                 case LocationGroup.BossAltar: return Group_BossLocations.Value;
-                case LocationGroup.Landmark: return Group_LandmarkLocations.Value;
+                case LocationGroup.Landmark: return true;
                 case LocationGroup.DungeonEntrance: return Group_DungeonLocations.Value;
                 case LocationGroup.Runestone: return Group_RunestoneLocations.Value;
                 case LocationGroup.Ruin: return Group_RuinLocations.Value;
@@ -366,19 +396,17 @@ namespace ValheimRadar
         public static ConfigEntry<bool> Group_RocksAndFlint;
         public static ConfigEntry<bool> Group_Ores;
         public static ConfigEntry<bool> Group_FunctionalStructures;
-        public static ConfigEntry<bool> Group_RuinsAndLocations;
-        public static ConfigEntry<bool> Group_PointsOfInterest;
+        public static ConfigEntry<bool> Group_SpawnersAndLandmarks;
         public static ConfigEntry<bool> Group_BossLocations;
-        public static ConfigEntry<bool> Group_LandmarkLocations;
         public static ConfigEntry<bool> Group_DungeonLocations;
         public static ConfigEntry<bool> Group_RunestoneLocations;
         public static ConfigEntry<bool> Group_RuinLocations;
 
-        // Creature Filters (fallback used for any creature without a specific entry above)
+        // Creature Filters (fallback used for any creature without a specific entry above). No Min
+        // Stars entries here - only explicitly tameable species (Boar/Wolf/Lox, see
+        // CreatureDefinition.Tameable) get a star filter; unlisted monsters/animals never do.
         public static ConfigEntry<bool> EnableMonsters;
         public static ConfigEntry<bool> EnableAnimals;
-        public static ConfigEntry<int> MinMonsterStars;
-        public static ConfigEntry<int> MinAnimalStars;
 
         // Berries
         public static ConfigEntry<bool> TrackRaspberry;
@@ -412,23 +440,30 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackSilver;
         public static ConfigEntry<bool> TrackObsidian;
 
-        // Functional Structures
+        // Functional Structures (chests, beehives, the Bog Witch's camp). Dungeon entrances used to
+        // have a "Dungeons" toggle here too - moved under Group_DungeonLocations/SecDungeonLocations
+        // below since it's the same "dungeon entrance" concept as the curated Location group, just
+        // its physics-scan fallback for entrances not in that curated table.
         public static ConfigEntry<bool> TrackChests;
-        public static ConfigEntry<bool> TrackDungeons;
+        public static ConfigEntry<bool> TrackBuriedChests;
         public static ConfigEntry<bool> TrackBeehives;
         public static ConfigEntry<bool> TrackTrader;
 
-        // Ruins & Locations (StoneRings/TarPits toggles removed - fully superseded by the
-        // ZoneSystem-based LocationDefinitions "Stone Circle"/"Stonehenge"/"Tar Pit" entries, see
-        // Group_RuinLocations)
+        // Unlisted/modded fallback toggles, physics-scan detected (PoiEvaluator) rather than
+        // ZoneSystem-discovered - each now lives under its matching curated Location group's section
+        // instead of the old standalone "Ruins & Locations" master toggle, since they're really just
+        // that group's catch-all for prefabs the curated LocationDefinitions table doesn't own
+        // (StoneRings/TarPits toggles were removed outright - fully superseded by the ZoneSystem
+        // -based LocationDefinitions "Stone Circle"/"Stonehenge"/"Tar Pit" entries).
         public static ConfigEntry<bool> TrackAbandonedRuins;
         public static ConfigEntry<bool> TrackRunestones;
+        public static ConfigEntry<bool> TrackUnlistedDungeons;
 
-        // Points of Interest (monster spawners and harvestable landmarks - split from "Ruins &
-        // Locations" since it's a newer, separately-toggleable batch of additions. DrakeNest/
-        // DecorativeStatues/MistlandsPOI toggles removed - fully superseded by the ZoneSystem-based
-        // LocationDefinitions "Drake Nest"/"Mistlands Statue"/Ruins & Structures group entries, see
-        // Group_RuinLocations)
+        // Spawners & Landmarks (monster-spawner landmarks and harvestable Guck Sacks - was named
+        // "Points of Interest", which said nothing about what it actually gates. DrakeNest/
+        // DecorativeStatues/MistlandsPOI toggles were removed outright - fully superseded by the
+        // ZoneSystem-based LocationDefinitions "Drake Nest"/"Mistlands Statue"/Ruins & Structures
+        // group entries, see Group_RuinLocations)
         public static ConfigEntry<bool> TrackGreydwarfNest;
         public static ConfigEntry<bool> TrackBodyPile;
         public static ConfigEntry<bool> TrackBonePile;
@@ -459,34 +494,44 @@ namespace ValheimRadar
             Group_FlowersAndCrops = Bind(config, "2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for wild plants, seeds, and crops.");
             Group_RocksAndFlint = Bind(config, "2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
             Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, and ingots.");
-            Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests, dungeon entrances, beehives.");
-            Group_RuinsAndLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Locations", true, "Master toggle for abandoned ruins and runestones not covered by the dedicated Location groups below.");
-            Group_PointsOfInterest = Bind(config, "2 - Master Groups", "Enable Points of Interest", true, "Master toggle for monster spawners and harvestable landmarks.");
+            Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests (buried and unburied), beehives, and the Bog Witch's camp.");
+            Group_SpawnersAndLandmarks = Bind(config, "2 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile) and harvestable Guck Sacks.");
             Group_BossLocations = Bind(config, "2 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
-            Group_LandmarkLocations = Bind(config, "2 - Master Groups", "Enable Landmarks Group", true, "Master toggle for the Start Temple and the Black Forest Trader.");
-            Group_DungeonLocations = Bind(config, "2 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town).");
-            Group_RunestoneLocations = Bind(config, "2 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations.");
-            Group_RuinLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Structures Group", true, "Master toggle for the full ZoneSystem-based ruins/structures roster (ruined houses, stone towers, shipwrecks, Mistlands structures, tar pits, etc.).");
+            Group_DungeonLocations = Bind(config, "2 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town) plus any unlisted dungeon-plane entrance (Bear Cave, Hildir's Crypt/Cave) caught by the physics-scan fallback.");
+            Group_RunestoneLocations = Bind(config, "2 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations, plus any unlisted/modded runestone caught by the physics-scan fallback.");
+            Group_RuinLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Structures Group", true, "Master toggle for the full ZoneSystem-based ruins/structures roster (ruined houses, stone towers, shipwrecks, Mistlands structures, tar pits, etc.), plus any unlisted/modded ruin caught by the physics-scan fallback. The Start Temple and Black Forest Trader are always shown and have no toggle.");
 
             EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
             EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
-            MinMonsterStars = Bind(config, "3 - Creatures (Defaults)", "Min Monster Stars (Unlisted)", 0, "Minimum star level for unlisted monsters (0 = All).", new AcceptableValueRange<int>(0, 3));
-            MinAnimalStars = Bind(config, "3 - Creatures (Defaults)", "Min Animal Stars (Unlisted)", 0, "Minimum star level for unlisted animals (0 = All).", new AcceptableValueRange<int>(0, 3));
 
             Creatures.Clear();
             foreach (var def in CreatureDefinitions)
             {
-                Creatures[def.CanonicalKey] = new CreatureConfigEntry
+                var entry = new CreatureConfigEntry
                 {
                     IsMonster = def.IsMonster,
-                    Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}."),
-                    MinStars = Bind(config, def.Section, $"{def.DisplayName} - Min Stars", 0, $"Minimum star level for {def.DisplayName} (0 = All, requires the toggle above to also be on). Not applicable to fish.", new AcceptableValueRange<int>(0, 3))
+                    Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}.")
                 };
+
+                // Only tameable species (Boar/Wolf/Lox) get a star filter - every other creature
+                // still shows its rolled star level in the pin label (see CreatureEvaluator), it just
+                // can't be filtered out by it anymore.
+                if (def.Tameable)
+                {
+                    entry.MinStars = Bind(config, def.Section, $"{def.DisplayName} - Min Stars", 0, $"Minimum star level for {def.DisplayName} (0 = All, requires the toggle above to also be on).", new AcceptableValueRange<int>(0, 3));
+                }
+
+                Creatures[def.CanonicalKey] = entry;
             }
 
             Locations.Clear();
             foreach (var def in LocationDefinitions)
             {
+                // AlwaysEnabled Locations (Start Temple, Black Forest Trader) are never bound - they
+                // have no toggle and no section, and are always shown (see
+                // LocationScanner.IsLocationCategoryEnabled).
+                if (def.AlwaysEnabled) continue;
+
                 Locations[def.CanonicalKey] = new LocationConfigEntry
                 {
                     Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}.")
@@ -520,18 +565,24 @@ namespace ValheimRadar
             TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver deposits, raw ore, and ingots.");
             TrackObsidian = Bind(config, "14 - Resources (Ores)", "Obsidian", true, "Show Obsidian deposits.");
 
-            TrackChests = Bind(config, "15 - Structures (Functional)", "Chests & Containers", true, "Show natural/world-spawn treasure chests (player-built chests are never tracked).");
-            TrackDungeons = Bind(config, "15 - Structures (Functional)", "Dungeons / Crypts / Caves", true, "Show dungeon-plane entrances (crypts, caves, etc.), detected by their teleport behavior rather than name.");
+            TrackChests = Bind(config, "15 - Structures (Functional)", "Chests (Above-Ground)", true, "Show natural/world-spawn treasure chests that are not buried (player-built chests are never tracked). Buried chests have their own toggle below.");
+            TrackBuriedChests = Bind(config, "15 - Structures (Functional)", "Buried Chests", true, "Show buried/hidden treasure chests (e.g. the Meadows burial-mound chest, the Ashlands memorial chest).");
             TrackBeehives = Bind(config, "15 - Structures (Functional)", "Beehives", true, "Show wild Beehives (player-built beehives are never tracked).");
-            TrackTrader = Bind(config, "15 - Structures (Functional)", "Traders", true, "Show the Bog Witch's camp (the Black Forest Trader has its own toggle - see the Landmarks group).");
+            TrackTrader = Bind(config, "15 - Structures (Functional)", "Bog Witch Camp", true, "Show the Bog Witch's camp. This is a different trader from the Black Forest Trader/Haldor, who is always shown and has no toggle.");
 
-            TrackAbandonedRuins = Bind(config, "16 - Structures (Ruins & World)", "Abandoned Farms & Ruins (Other)", true, "Show ruins not covered by the dedicated Location groups below (Combat Ruin, Meadows Village 2).");
-            TrackRunestones = Bind(config, "16 - Structures (Ruins & World)", "Runestones (Other)", true, "Show any runestone not covered by the dedicated Runestones group below (unlisted/modded variants).");
+            TrackGreydwarfNest = Bind(config, SecSpawnersAndLandmarks, "Greydwarf Nest", true, "Show Greydwarf Nests (Black Forest monster spawner).");
+            TrackBodyPile = Bind(config, SecSpawnersAndLandmarks, "Body Pile", true, "Show Body Piles (Swamp Draugr spawner).");
+            TrackBonePile = Bind(config, SecSpawnersAndLandmarks, "Bone Pile", true, "Show Bone Piles (Swamp Skeleton spawner).");
+            TrackGuck = Bind(config, SecSpawnersAndLandmarks, "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
 
-            TrackGreydwarfNest = Bind(config, "17 - Points of Interest", "Greydwarf Nest", true, "Show Greydwarf Nests (Black Forest monster spawner).");
-            TrackBodyPile = Bind(config, "17 - Points of Interest", "Body Pile", true, "Show Body Piles (Swamp Draugr spawner).");
-            TrackBonePile = Bind(config, "17 - Points of Interest", "Bone Pile", true, "Show Bone Piles (Swamp Skeleton spawner).");
-            TrackGuck = Bind(config, "17 - Points of Interest", "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
+            // Unlisted/modded fallback toggles - each lives in its matching curated Location group's
+            // own section now instead of the old standalone "Ruins & Locations" master group, since
+            // they're really just that group's physics-scan catch-all (see Group_RuinLocations/
+            // Group_RunestoneLocations/Group_DungeonLocations and PoiEvaluator's Runestones/
+            // AbandonedRuins/Dungeons rules).
+            TrackAbandonedRuins = Bind(config, SecRuinLocations, "Abandoned Ruins (Unlisted/Modded)", true, "Show ruins not covered by the curated list above (Combat Ruin, Meadows Village 2).");
+            TrackRunestones = Bind(config, SecRunestoneLocations, "Runestones (Unlisted/Modded)", true, "Show any runestone not covered by the curated list above.");
+            TrackUnlistedDungeons = Bind(config, SecDungeonLocations, "Dungeon Entrances (Unlisted)", true, "Show dungeon-plane entrances not covered by the curated list above (Bear Cave, Hildir's Crypt/Cave, and any other Teleport-based entrance), detected by component signature rather than name.");
         }
     }
 }

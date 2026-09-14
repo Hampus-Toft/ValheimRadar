@@ -581,7 +581,10 @@ namespace ValheimRadar
         // field". Written as line 0 of the save file; a file with no version line at all (or an
         // unparseable one) is treated as PreVersioning (0) - the pipe-delimited format shipped before
         // this field existed.
-        private const int SaveFormatVersion = 2;
+        // Bumped to 3 for the Chests -> Chests/BuriedChests split (see
+        // MigrateLegacyCategoryKey's "Chests" case) so saves written by older builds get re-migrated
+        // even though their categoryKey ("resource:Chests") is still a currently-valid id on its own.
+        private const int SaveFormatVersion = 3;
         private const int PreVersioningFormat = 0;
 
         // Only stationary resource/structure points are written to disk - creature positions are
@@ -803,6 +806,15 @@ namespace ValheimRadar
                     if (cleanRaw == "silverore") { newCategoryKey = "resource:SilverOre"; return true; }
                     if (cleanRaw == "silvervein" || cleanRaw == "silvervein_frac" || cleanRaw == "rock3_silver" || cleanRaw == "rock3_silver_frac") { newCategoryKey = "resource:SilverDeposit"; return true; }
                     newCategoryKey = "resource:SilverIngot";
+                    return true;
+
+                // Chests split into above-ground (Chests) vs buried (BuriedChests) - re-derive from
+                // the saved raw prefab name, which is still exact.
+                case "Chests":
+                    if (cleanRaw == "treasurechest_meadows_buried" || cleanRaw == "treasurechest_memorial_buried")
+                    {
+                        newCategoryKey = "resource:BuriedChests";
+                    }
                     return true;
 
                 // No natural equivalent exists - these points can't be carried forward.
