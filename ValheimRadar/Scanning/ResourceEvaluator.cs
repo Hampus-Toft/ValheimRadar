@@ -116,7 +116,7 @@ namespace ValheimRadar
 
             // Obsidian is used directly as a mined material - no smelting step, so no separate
             // Ore/Ingot split (confirmed no ObsidianOre/ObsidianIngot prefab exists).
-            new ResourceRule("ObsidianDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackObsidian.Value, (go, n) => IsExactAlias(n, "minerock_obsidian"), "ore.png", null, Const("Obsidian Deposit")),
+            new ResourceRule("ObsidianDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackObsidian.Value, (go, n) => IsExactAlias(n, "minerock_obsidian"), "ore.png", "obsidian", Const("Obsidian Deposit")),
 
             // Wild beehives - harvestable and renewable like the berries/mushrooms/crops above,
             // rather than a fixed structure, so it lives here rather than in PoiEvaluator.

@@ -437,12 +437,16 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackStone;
         public static ConfigEntry<bool> TrackWood;
 
-        // Ores (each now gates a Deposit/Ore/Ingot trio - see ObjectEvaluator.ResourceRules)
+        // Ores (each now gates a Deposit/Ore/Ingot trio - see ObjectEvaluator.ResourceRules). Guck
+        // Sack lives here too, not under Spawners & Landmarks - it's a harvestable Swamp resource
+        // players look for alongside ores, even though it's still physics-scan detected via
+        // PoiEvaluator rather than a MineRock-based ResourceRule (see PoiEvaluator.Rules).
         public static ConfigEntry<bool> TrackCopper;
         public static ConfigEntry<bool> TrackTin;
         public static ConfigEntry<bool> TrackIron;
         public static ConfigEntry<bool> TrackSilver;
         public static ConfigEntry<bool> TrackObsidian;
+        public static ConfigEntry<bool> TrackGuck;
 
         // Functional Structures (chests, beehives, the Bog Witch's camp). Dungeon entrances used to
         // have a "Dungeons" toggle here too - moved under Group_DungeonLocations/SecDungeonLocations
@@ -463,15 +467,14 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackRunestones;
         public static ConfigEntry<bool> TrackUnlistedDungeons;
 
-        // Spawners & Landmarks (monster-spawner landmarks and harvestable Guck Sacks - was named
-        // "Points of Interest", which said nothing about what it actually gates. DrakeNest/
-        // DecorativeStatues/MistlandsPOI toggles were removed outright - fully superseded by the
-        // ZoneSystem-based LocationDefinitions "Drake Nest"/"Mistlands Statue"/Ruins & Structures
-        // group entries, see Group_RuinLocations)
+        // Spawners & Landmarks (monster-spawner landmarks - was named "Points of Interest", which
+        // said nothing about what it actually gates. DrakeNest/DecorativeStatues/MistlandsPOI
+        // toggles were removed outright - fully superseded by the ZoneSystem-based
+        // LocationDefinitions "Drake Nest"/"Mistlands Statue"/Ruins & Structures group entries, see
+        // Group_RuinLocations. Guck Sack moved to the Ores group above - see TrackGuck.)
         public static ConfigEntry<bool> TrackGreydwarfNest;
         public static ConfigEntry<bool> TrackBodyPile;
         public static ConfigEntry<bool> TrackBonePile;
-        public static ConfigEntry<bool> TrackGuck;
 
         private static int _order;
 
@@ -497,9 +500,9 @@ namespace ValheimRadar
             Group_Mushrooms = Bind(config, "2 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
             Group_FlowersAndCrops = Bind(config, "2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for wild plants, seeds, and crops.");
             Group_RocksAndFlint = Bind(config, "2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
-            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, and ingots.");
+            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, ingots, and harvestable Guck Sacks.");
             Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests (buried and unburied), beehives, and the Bog Witch's camp.");
-            Group_SpawnersAndLandmarks = Bind(config, "2 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile) and harvestable Guck Sacks.");
+            Group_SpawnersAndLandmarks = Bind(config, "2 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile).");
             Group_BossLocations = Bind(config, "2 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
             Group_DungeonLocations = Bind(config, "2 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town) plus any unlisted dungeon-plane entrance (Bear Cave, Hildir's Crypt/Cave) caught by the physics-scan fallback.");
             Group_RunestoneLocations = Bind(config, "2 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations, plus any unlisted/modded runestone caught by the physics-scan fallback.");
@@ -568,6 +571,7 @@ namespace ValheimRadar
             TrackIron = Bind(config, "14 - Resources (Ores)", "Iron", true, "Show Iron scrap sources and ingots.");
             TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver deposits, raw ore, and ingots.");
             TrackObsidian = Bind(config, "14 - Resources (Ores)", "Obsidian", true, "Show Obsidian deposits.");
+            TrackGuck = Bind(config, "14 - Resources (Ores)", "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
 
             TrackChests = Bind(config, "15 - Structures (Functional)", "Chests (Above-Ground)", true, "Show natural/world-spawn treasure chests that are not buried (player-built chests are never tracked). Buried chests have their own toggle below.");
             TrackBuriedChests = Bind(config, "15 - Structures (Functional)", "Buried Chests", true, "Show buried/hidden treasure chests (e.g. the Meadows burial-mound chest, the Ashlands memorial chest).");
@@ -577,7 +581,6 @@ namespace ValheimRadar
             TrackGreydwarfNest = Bind(config, SecSpawnersAndLandmarks, "Greydwarf Nest", true, "Show Greydwarf Nests (Black Forest monster spawner).");
             TrackBodyPile = Bind(config, SecSpawnersAndLandmarks, "Body Pile", true, "Show Body Piles (Swamp Draugr spawner).");
             TrackBonePile = Bind(config, SecSpawnersAndLandmarks, "Bone Pile", true, "Show Bone Piles (Swamp Skeleton spawner).");
-            TrackGuck = Bind(config, SecSpawnersAndLandmarks, "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
 
             // Unlisted/modded fallback toggles - each lives in its matching curated Location group's
             // own section now instead of the old standalone "Ruins & Locations" master group, since

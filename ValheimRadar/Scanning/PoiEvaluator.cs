@@ -122,14 +122,16 @@ namespace ValheimRadar
             // curated list.
             new PoiRule("AbandonedRuins", () => RadarConfig.Group_RuinLocations.Value && RadarConfig.TrackAbandonedRuins.Value, (go, n) => IsExactAlias(n, "combatruin01", "woodvillage2"), "ruin.png"),
 
-            // SPAWNERS & LANDMARKS (monster spawners / harvestable Guck Sacks)
+            // SPAWNERS & LANDMARKS (monster spawners)
             new PoiRule("GreydwarfNest", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackGreydwarfNest.Value, (go, n) => IsExactAlias(n, "spawner_greydwarfnest"), "ruin.png", null, Const("Greydwarf Nest")),
             new PoiRule("BodyPile", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackBodyPile.Value, (go, n) => IsExactAlias(n, "spawner_draugrpile"), "ruin.png", null, Const("Body Pile")),
             new PoiRule("BonePile", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackBonePile.Value, (go, n) => IsExactAlias(n, "bonepilespawner", "bonepilespawner_swamp"), "ruin.png", null, Const("Bone Pile")),
-            // "guck" is the vanilla pickup-item icon for the Guck material these sacks drop -
-            // verified against Jotunn's sprite atlas (see VanillaIconResolver's header comment for
-            // why verified names, not guesses, matter here).
-            new PoiRule("Guck", () => RadarConfig.Group_SpawnersAndLandmarks.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", "guck", Const("Guck Sack")),
+
+            // Harvestable Guck Sack - grouped under Ores (Group_Ores/TrackGuck) rather than Spawners
+            // & Landmarks, since players look for it alongside the other Swamp/ore resources; still
+            // physics-scan detected here rather than a ResourceEvaluator ResourceRule since it has no
+            // MineRock component.
+            new PoiRule("Guck", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", "guck", Const("Guck Sack")),
         };
 
         internal static bool TryClassify(GameObject go, string nameLower, out string displayName, out Sprite icon, out string categoryKey)
