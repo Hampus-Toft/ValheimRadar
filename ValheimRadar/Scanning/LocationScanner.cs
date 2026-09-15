@@ -19,29 +19,55 @@ namespace ValheimRadar
     // assembly_valheim.dll) - true for a listen-server/single-player host, but false for a normal
     // client connected to a dedicated server. Such a client's own ZoneSystem never generates
     // Locations locally, so GetLocationList() stays empty for it forever - not an admin/permission
-    // gate, just server-authoritative world-gen. The only Location data a pure client actually
-    // receives is a server-pushed subset (locations flagged m_iconAlways, or m_iconPlaced once
-    // placed) via the "LocationIcons" RPC, exposed client-side through the public
-    // ZoneSystem.GetLocationIcons(Dictionary<Vector3,string>) method - smaller than the host's full
-    // GetLocationList(), but it's what we fall back to so dedicated-server clients still get pins
-    // for the Locations vanilla itself would show as map icons.
+    // gate, just server-authoritative world-gen.
+    //
+    // The client fallback below reads LocationProxy instead - a small ZNetView-backed marker object
+    // that ZoneSystem.CreateLocationProxy() spawns (server-side, alongside every Location it ever
+    // places) purely so its ZDO can sync the placement to nearby clients over the normal ZDO
+    // relevancy system, same as any creature/resource ZDO. Each proxy's ZDO carries only a hashed
+    // prefab-name int (ZDOVars.s_location, set via string.GetStableHashCode() - see
+    // LocationProxy.SetLocation) and a seed, which is all a client needs to regenerate that
+    // Location's own DungeonGenerator content locally and deterministically (the "Dungeon Generator"
+    // log line visible client-side even against a dedicated server). We resolve that hash back to a
+    // RadarConfig.LocationDefinition via a lookup built from ZoneSystem.m_locations - the *static*
+    // catalog of every Location template the game knows about, loaded identically on every peer by
+    // SetupLocations() regardless of IsServer(), so hashing is never needed on our side (letting
+    // ZoneLocation.Hash do it avoids ever having to guess the real prefab name's exact casing).
+    // This covers every placed Location a client has come near, not just the map-icon subset
+    // ZoneSystem.GetLocationIcons() would give us, so it's used unconditionally as the client path.
     public static class LocationScanner
     {
-        // GetLocationList()'s backing dictionary only ever grows (zones are never un-generated), and
-        // the client-side icon dictionary is re-broadcast in full each time a new iconPlaced Location
-        // is placed nearby, so it grows too - either way, a call whose count hasn't changed since the
-        // last one is guaranteed to have nothing new to offer - skip the full iteration on those ticks.
+        // GetLocationList()'s backing dictionary only ever grows (zones are never un-generated), so
+        // a call whose count hasn't changed since the last one is guaranteed to have nothing new to
+        // offer - skip the full iteration entirely on those ticks. Not used on the client fallback
+        // path: FindObjectsByType<LocationProxy>() naturally fluctuates as zones load/unload, and
+        // PinManager.RecordAndSyncLocations already merges idempotently, so re-resolving every tick
+        // there is simpler and just as cheap.
         private static int lastLocationDictCount = -1;
 
-        // Reused across ticks on the client fallback path to avoid a per-scan allocation;
-        // ZoneSystem.GetLocationIcons() only ever adds entries, so it must be cleared before each call.
-        private static readonly Dictionary<Vector3, string> locationIconsBuffer = new Dictionary<Vector3, string>();
+        // Hashed-prefab-name -> definition, built once per world from ZoneSystem.m_locations (see
+        // class remarks above). Rebuilt lazily since ZoneSystem.instance isn't available at Reset()
+        // time (world unload/disconnect).
+        private static Dictionary<int, LocationHashEntry> locationHashLookup;
 
-        // Called on world unload/disconnect (see RadarPlugin) so a stale count from a previous world
-        // never suppresses a real scan of the next one.
+        private readonly struct LocationHashEntry
+        {
+            public readonly RadarConfig.LocationDefinition Def;
+            public readonly string PrefabLower;
+
+            public LocationHashEntry(RadarConfig.LocationDefinition def, string prefabLower)
+            {
+                Def = def;
+                PrefabLower = prefabLower;
+            }
+        }
+
+        // Called on world unload/disconnect (see RadarPlugin) so a stale count/lookup from a
+        // previous world never leaks into or suppresses a real scan of the next one.
         public static void Reset()
         {
             lastLocationDictCount = -1;
+            locationHashLookup = null;
         }
 
         public static List<TrackedLocation> ScanLocations()
@@ -52,7 +78,7 @@ namespace ValheimRadar
 
             bool isServer = ZNet.instance != null && ZNet.instance.IsServer();
 
-            return isServer ? ScanFromLocationList(results) : ScanFromLocationIcons(results);
+            return isServer ? ScanFromLocationList(results) : ScanFromLocationProxies(results);
         }
 
         private static List<TrackedLocation> ScanFromLocationList(List<TrackedLocation> results)
@@ -86,33 +112,51 @@ namespace ValheimRadar
             return results;
         }
 
-        private static List<TrackedLocation> ScanFromLocationIcons(List<TrackedLocation> results)
+        private static Dictionary<int, LocationHashEntry> GetOrBuildHashLookup()
         {
-            locationIconsBuffer.Clear();
-            ZoneSystem.instance.GetLocationIcons(locationIconsBuffer);
+            if (locationHashLookup != null) return locationHashLookup;
 
-            if (locationIconsBuffer.Count == lastLocationDictCount) return results;
-            lastLocationDictCount = locationIconsBuffer.Count;
-
-            foreach (var icon in locationIconsBuffer)
+            var lookup = new Dictionary<int, LocationHashEntry>();
+            foreach (var loc in ZoneSystem.instance.m_locations)
             {
-                string prefabLower = icon.Value?.ToLowerInvariant();
+                string prefabLower = loc.m_prefabName?.ToLowerInvariant();
                 if (string.IsNullOrEmpty(prefabLower)) continue;
                 if (!RadarConfig.LocationPrefabLookup.TryGetValue(prefabLower, out var def)) continue;
 
-                string locationKey = $"{def.CanonicalKey}_{Mathf.RoundToInt(icon.Key.x)}_{Mathf.RoundToInt(icon.Key.z)}";
+                lookup[loc.Hash] = new LocationHashEntry(def, prefabLower);
+            }
+
+            locationHashLookup = lookup;
+            return lookup;
+        }
+
+        private static List<TrackedLocation> ScanFromLocationProxies(List<TrackedLocation> results)
+        {
+            var hashLookup = GetOrBuildHashLookup();
+
+            foreach (var proxy in Object.FindObjectsByType<LocationProxy>(FindObjectsSortMode.None))
+            {
+                var netView = proxy.GetComponent<ZNetView>();
+                if (netView == null || !netView.IsValid() || netView.GetZDO() == null) continue;
+
+                int locationHash = netView.GetZDO().GetInt(ZDOVars.s_location, 0);
+                if (locationHash == 0) continue;
+                if (!hashLookup.TryGetValue(locationHash, out var entry)) continue;
+
+                Vector3 pos = proxy.transform.position;
+                string locationKey = $"{entry.Def.CanonicalKey}_{Mathf.RoundToInt(pos.x)}_{Mathf.RoundToInt(pos.z)}";
 
                 results.Add(new TrackedLocation
                 {
                     LocationKey = locationKey,
-                    Position = icon.Key,
-                    RawName = prefabLower,
-                    DisplayName = def.DisplayName,
-                    CategoryKey = $"location:{def.CanonicalKey}"
+                    Position = pos,
+                    RawName = entry.PrefabLower,
+                    DisplayName = entry.Def.DisplayName,
+                    CategoryKey = $"location:{entry.Def.CanonicalKey}"
                 });
             }
 
-            Debug.Log($"[ValheimRadar] location-icon-scan (client fallback) matched={results.Count} totalKnown={locationIconsBuffer.Count}");
+            Debug.Log($"[ValheimRadar] location-proxy-scan (client fallback) matched={results.Count}");
 
             return results;
         }
