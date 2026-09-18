@@ -82,5 +82,40 @@ namespace ValheimRadar
 
             return items;
         }
+
+        // Gates PermanentSpatialScanner's "scan once, ever" cells against Valheim's own object
+        // instantiation lag - confirmed by decompiling assembly_valheim.dll: on a dedicated server, a
+        // sector's ZDOs sync over the network and ZNetScene.CreateObjectsSorted() instantiates their
+        // GameObjects at a throttled rate (10/frame outside a loading screen), so a cell that just
+        // entered ScanRadius can have zero colliders in place yet even though the ZDOs themselves
+        // already exist. ScanCell's Physics.OverlapBox only ever sees already-instantiated
+        // GameObjects, so scanning (and permanently marking scanned) a cell before its objects finish
+        // loading silently drops whatever hadn't spawned in yet - this is what left ores/berries/
+        // pickables unpinned outside the immediate area around login/respawn (where objects had
+        // already had time to load) on a dedicated server, while listen-server/singleplayer never hit
+        // it since there's no network hop to lag behind.
+        //
+        // ZNetScene.IsAreaReady(point) is the verified-stable public API (same decompile) the base
+        // game itself uses to answer exactly this question - it checks both that the point's zone has
+        // been received (ZoneSystem.IsZoneLoaded) and that every ZDO already known to be relevant to
+        // that zone has a live GameObject instance. CellSize (40m) is smaller than Valheim's own
+        // zone size (64m, ZoneSystem.m_zoneSize) in both axes, so a cell can straddle at most a 2x2
+        // block of zones - and each of those zones necessarily contains at least one of the cell's 4
+        // corners. Sampling all 4 corners (instead of just the center) is therefore sufficient to
+        // catch every zone the cell's Physics.OverlapBox could actually pull colliders from.
+        internal static bool IsCellReady(ScanCellKey key, float y)
+        {
+            if (ZNetScene.instance == null) return true;
+
+            float minX = key.X * CellSize;
+            float maxX = minX + CellSize;
+            float minZ = key.Z * CellSize;
+            float maxZ = minZ + CellSize;
+
+            return ZNetScene.instance.IsAreaReady(new Vector3(minX, y, minZ))
+                && ZNetScene.instance.IsAreaReady(new Vector3(maxX, y, minZ))
+                && ZNetScene.instance.IsAreaReady(new Vector3(minX, y, maxZ))
+                && ZNetScene.instance.IsAreaReady(new Vector3(maxX, y, maxZ));
+        }
     }
 }
