@@ -79,10 +79,10 @@ namespace ValheimRadar
         {
             HashSet<ScanCellKey> result = new HashSet<ScanCellKey>();
 
-            int minX = Mathf.FloorToInt((playerPos.x - scanRadius) / ScanGeometry.CellSize);
-            int maxX = Mathf.FloorToInt((playerPos.x + scanRadius) / ScanGeometry.CellSize);
-            int minZ = Mathf.FloorToInt((playerPos.z - scanRadius) / ScanGeometry.CellSize);
-            int maxZ = Mathf.FloorToInt((playerPos.z + scanRadius) / ScanGeometry.CellSize);
+            int minX = ScanGeometry.GetCellIndex(playerPos.x - scanRadius);
+            int maxX = ScanGeometry.GetCellIndex(playerPos.x + scanRadius);
+            int minZ = ScanGeometry.GetCellIndex(playerPos.z - scanRadius);
+            int maxZ = ScanGeometry.GetCellIndex(playerPos.z + scanRadius);
 
             // Half-diagonal padding so a cell whose center falls just outside the radius, but that
             // still partially overlaps the scan circle, isn't skipped entirely.
@@ -93,8 +93,8 @@ namespace ValheimRadar
             {
                 for (int iz = minZ; iz <= maxZ; iz++)
                 {
-                    float centerX = (ix + 0.5f) * ScanGeometry.CellSize;
-                    float centerZ = (iz + 0.5f) * ScanGeometry.CellSize;
+                    float centerX = ScanGeometry.GetCellCenter(ix);
+                    float centerZ = ScanGeometry.GetCellCenter(iz);
                     float dx = centerX - playerPos.x;
                     float dz = centerZ - playerPos.z;
 
