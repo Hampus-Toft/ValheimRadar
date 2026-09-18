@@ -29,11 +29,23 @@ namespace ValheimRadar
     // PermanentSpatialScanner don't each carry their own copy of the same Physics query logic.
     internal static class ScanGeometry
     {
-        // Fixed rather than derived from ScanRadius: per-tick scanned AREA already scales with the
-        // caller's own batching strategy (rotation slice / new-cells-per-tick) regardless of cell
-        // size, so cell size only trades off Physics call COUNT vs call SIZE, not the scan budget
-        // itself. 40m keeps that count reasonable across the whole 10-300m ScanRadius range.
-        internal const float CellSize = 40f;
+        // Deliberately equal to Valheim's own zone size (ZoneSystem.m_zoneSize, hardcoded as 64 in
+        // ZoneSystem.GetZone/GetZonePos - confirmed by decompiling assembly_valheim.dll) so every scan
+        // cell is exactly one game zone. A smaller/unaligned cell can straddle up to 4 zones, which
+        // makes IsCellReady wait on the slowest of them and multiplies its readiness checks. Fixed
+        // rather than derived from ScanRadius: per-tick scanned AREA already scales with the caller's
+        // own batching strategy (rotation slice / new-cells-per-tick) regardless of cell size, so cell
+        // size only trades off Physics call COUNT vs call SIZE, not the scan budget itself.
+        internal const float CellSize = 64f;
+
+        // Cell index containing a world-space coordinate on one axis. Valheim's zones are CENTERED on
+        // multiples of CellSize (zone 0 spans -32..+32, not 0..64), so this mirrors
+        // ZoneSystem.GetZone's floor((v + 32) / 64) rather than a plain floor(v / CellSize) - which
+        // would leave every cell straddling two zones per axis, defeating the alignment.
+        internal static int GetCellIndex(float world) => Mathf.FloorToInt((world + (CellSize / 2f)) / CellSize);
+
+        // World-space center of a cell on one axis (matches ZoneSystem.GetZonePos).
+        internal static float GetCellCenter(int index) => index * CellSize;
 
         // Vertical half-extent of a scan cell's collision box, independent of ScanRadius. ScanRadius
         // is a horizontal (XZ) distance, so reusing it for box height would mean a 300m ScanRadius
@@ -53,7 +65,7 @@ namespace ValheimRadar
             List<TrackedItem> items = new List<TrackedItem>();
             HashSet<ZDOID> processedZdoids = new HashSet<ZDOID>();
 
-            Vector3 center = new Vector3((key.X + 0.5f) * CellSize, playerY, (key.Z + 0.5f) * CellSize);
+            Vector3 center = new Vector3(GetCellCenter(key.X), playerY, GetCellCenter(key.Z));
             Vector3 halfExtents = new Vector3(CellSize / 2f, CellHeight, CellSize / 2f);
 
             Collider[] hitColliders = Physics.OverlapBox(center, halfExtents);
@@ -98,24 +110,15 @@ namespace ValheimRadar
         // ZNetScene.IsAreaReady(point) is the verified-stable public API (same decompile) the base
         // game itself uses to answer exactly this question - it checks both that the point's zone has
         // been received (ZoneSystem.IsZoneLoaded) and that every ZDO already known to be relevant to
-        // that zone has a live GameObject instance. CellSize (40m) is smaller than Valheim's own
-        // zone size (64m, ZoneSystem.m_zoneSize) in both axes, so a cell can straddle at most a 2x2
-        // block of zones - and each of those zones necessarily contains at least one of the cell's 4
-        // corners. Sampling all 4 corners (instead of just the center) is therefore sufficient to
-        // catch every zone the cell's Physics.OverlapBox could actually pull colliders from.
+        // that zone has a live GameObject instance (and, per the same decompile, it also covers the
+        // zone's immediate neighbours via FindSectorObjects with SimulationDistance(1, 0)). Cells are
+        // zone-aligned (see CellSize/GetCellIndex), so a cell is exactly one zone and a single sample
+        // at its center is sufficient - no need to probe corners across several zones.
         internal static bool IsCellReady(ScanCellKey key, float y)
         {
             if (ZNetScene.instance == null) return true;
 
-            float minX = key.X * CellSize;
-            float maxX = minX + CellSize;
-            float minZ = key.Z * CellSize;
-            float maxZ = minZ + CellSize;
-
-            return ZNetScene.instance.IsAreaReady(new Vector3(minX, y, minZ))
-                && ZNetScene.instance.IsAreaReady(new Vector3(maxX, y, minZ))
-                && ZNetScene.instance.IsAreaReady(new Vector3(minX, y, maxZ))
-                && ZNetScene.instance.IsAreaReady(new Vector3(maxX, y, maxZ));
+            return ZNetScene.instance.IsAreaReady(new Vector3(GetCellCenter(key.X), y, GetCellCenter(key.Z)));
         }
     }
 }
