@@ -18,6 +18,13 @@ namespace ValheimRadar
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
         private const float PersistSaveInterval = 30f;
 
+        // Troubleshooting only (RadarConfig.DiagnosticLogging): while the large map is open, log the pin-name
+        // state a few times per session, never continuously.
+        private const float DiagnosticInterval = 8f;
+        private const int MaxDiagnosticLogs = 6;
+
+        private float diagnosticTimer = 0f;
+        private int diagnosticLogCount = 0;
         private float timer = 0f;
         private float locationTimer = 0f;
         private float saveTimer = 0f;
@@ -115,7 +122,12 @@ namespace ValheimRadar
                 // ClusterDistance change uses, so a reloaded pin is never out of step with what the
                 // next real scan would produce.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
-                MinimapMarkerOrder.Apply(Minimap.instance);
+                diagnosticTimer = 0f;
+                diagnosticLogCount = 0;
+                if (RadarConfig.RaisePlayerMarker == null || RadarConfig.RaisePlayerMarker.Value)
+                {
+                    MinimapMarkerOrder.Apply(Minimap.instance);
+                }
                 PinManager.LoadDismissedPins(currentWorldName);
                 PinManager.LoadWorldPins(currentWorldName);
                 PinManager.RebuildPersistentClusters(ClusterDistance);
@@ -138,6 +150,17 @@ namespace ValheimRadar
                 locationTimer = 0f;
                 List<TrackedLocation> newLocations = LocationScanner.ScanLocations();
                 if (newLocations.Count > 0) PinManager.RecordAndSyncLocations(Minimap.instance, newLocations);
+            }
+
+            if (Minimap.instance.m_mode == Minimap.MapMode.Large && (RadarConfig.DiagnosticLogging == null || RadarConfig.DiagnosticLogging.Value))
+            {
+                diagnosticTimer += Time.deltaTime;
+                if (diagnosticTimer >= DiagnosticInterval && diagnosticLogCount < MaxDiagnosticLogs)
+                {
+                    diagnosticTimer = 0f;
+                    diagnosticLogCount++;
+                    PinManager.LogNameDiagnostics(Minimap.instance);
+                }
             }
 
             saveTimer += Time.deltaTime;

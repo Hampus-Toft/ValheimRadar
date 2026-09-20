@@ -649,6 +649,59 @@ namespace ValheimRadar
             }
         }
 
+        // Troubleshooting snapshot of the name objects Minimap builds for ValheimRadar's pins (see
+        // RadarPlugin's throttled call, RadarConfig.DiagnosticLogging). One summary line plus a few sample pins:
+        // it says whether name objects exist, are active, and sit under the expected name root, and whether the
+        // vanilla "names only when zoomed in" rule (m_showNamesZoom) is what's hiding them. Read-only.
+        public static void LogNameDiagnostics(Minimap minimap)
+        {
+            if (minimap == null) return;
+
+            try
+            {
+                int withPin = 0, withName = 0, withNameData = 0, withNameObject = 0, nameObjectActive = 0;
+                var samples = new List<string>();
+
+                foreach (var kvp in activeClusterPins)
+                {
+                    Minimap.PinData pin = kvp.Value.Pin;
+                    if (pin == null) continue;
+                    withPin++;
+
+                    bool hasName = !string.IsNullOrEmpty(pin.m_name);
+                    if (hasName) withName++;
+
+                    Minimap.PinNameData nameData = pin.m_NamePinData;
+                    if (nameData != null) withNameData++;
+
+                    GameObject nameObject = nameData != null ? nameData.PinNameGameObject : null;
+                    if (nameObject != null)
+                    {
+                        withNameObject++;
+                        if (nameObject.activeInHierarchy) nameObjectActive++;
+                    }
+
+                    if (hasName && samples.Count < 3)
+                    {
+                        string parent = nameObject != null && nameObject.transform.parent != null ? nameObject.transform.parent.name : "-";
+                        samples.Add($"'{pin.m_name}' cat={kvp.Value.CategoryKey} nameData={(nameData != null)} nameObj={(nameObject != null)} active={(nameObject != null && nameObject.activeInHierarchy)} parent={parent} iconShown={(pin.m_uiElement != null && pin.m_uiElement.gameObject.activeInHierarchy)}");
+                    }
+                }
+
+                RectTransform nameRoot = minimap.m_pinNameRootLarge;
+                string rootInfo = nameRoot != null
+                    ? $"{nameRoot.name} activeInHierarchy={nameRoot.gameObject.activeInHierarchy} children={nameRoot.childCount} scale={nameRoot.lossyScale.x:F2}"
+                    : "<null>";
+
+                Debug.Log($"[ValheimRadar] name-diag mode={minimap.m_mode} largeZoom={minimap.LargeZoom:F2} showNamesBelow={minimap.m_showNamesZoom:F2} radarPins={withPin} withName={withName} withNameData={withNameData} withNameObject={withNameObject} nameObjectActive={nameObjectActive} nameRoot=[{rootInfo}]");
+                foreach (string sample in samples) Debug.Log($"[ValheimRadar] name-diag sample {sample}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ValheimRadar] name-diag failed: {ex.Message}");
+            }
+        }
+
         // --- Manual pin removal (right-click) ---------------------------------------------------------
         //
         // Vanilla only lets the player remove pins with m_save == true (Minimap.GetClosestPin), and radar
