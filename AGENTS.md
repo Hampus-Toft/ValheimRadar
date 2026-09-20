@@ -1,6 +1,6 @@
 # Agent Instructions - ValheimRadar
 
-This document defines operating guidelines, safety boundaries, and workflows for autonomous AI agents working on `ValheimRadar`.
+This document defines operating guidelines, safety boundaries, and workflows for autonomous AI agents working on `ValheimRadar`. `CLAUDE.md` imports this file; keep all shared guidance here.
 
 ---
 
@@ -27,25 +27,30 @@ This document defines operating guidelines, safety boundaries, and workflows for
    `ValheimRadar.csproj` references `assembly_valheim.dll`, `UnityEngine*.dll`, `BepInEx.dll`,
    and `Jotunn.dll` via `HintPath`, resolved from `ValheimInstallDir` (default: the standard
    Steam path `C:\Program Files (x86)\Steam\steamapps\common\Valheim`, overridable via the
-   `VALHEIM_INSTALL_DIR` env var or `-p:ValheimInstallDir="..."`). A `CheckJotunnReference`
-   target fails the build early with a clear error if `Jotunn.dll` isn't present under
-   `<ValheimInstallDir>\BepInEx\plugins\...` (override its location with
-   `-p:JotunnDllPath="..."` if your mod manager uses a different plugin folder name). If a
-   build fails this way, that's an environment problem, not something to "fix" by deleting the
-   guard target.
+   `VALHEIM_INSTALL_DIR` env var or `-p:ValheimInstallDir="..."`). There are no NuGet
+   substitutes for these assemblies. A `CheckJotunnReference` target fails the build early with
+   a clear error if `Jotunn.dll` isn't present under `<ValheimInstallDir>\BepInEx\plugins\...`
+   (override its location with `-p:JotunnDllPath="..."` if your mod manager uses a different
+   plugin folder name). If a build fails this way, that's an environment problem, not something
+   to "fix" by deleting the guard target.
 3. **The `PostBuild` target also copies the built DLL into `<ValheimInstallDir>\BepInEx\plugins`
    and errors if `ValheimInstallDir` doesn't exist.** This is intentional (auto-deploy for local
-   testing), not a bug.
-4. **`dotnet test` is always safe.** `ValheimRadar.Tests.csproj` forces
-   `AutoLaunchValheim=false` on its `ProjectReference` to `ValheimRadar.csproj`, so running the
-   test suite never touches the live game process.
+   testing), not a bug. It happens for every configuration, including the Debug build that
+   `dotnet test` triggers - expect the deployed DLL to be overwritten.
+4. **`dotnet test` never kills or relaunches the game.** `ValheimRadar.Tests.csproj` forces
+   `AutoLaunchValheim=false` on its `ProjectReference` to `ValheimRadar.csproj`. It does still
+   perform the DLL copy from gotcha #3.
+5. **`.claude/worktrees/` holds full checkouts of other branches and is not gitignored.** Exclude
+   it from searches (Glob/Grep from the repo root return duplicate hits) and never `git add -A`.
 
 ---
 
 ## Build & Test Commands
 
-- **Run unit tests (safe, no side effects):** `dotnet test` (from repo root or
+- **Run unit tests (safe for the game process):** `dotnet test` (from repo root or
   `ValheimRadar.Tests/`).
+  - One test class: `dotnet test --filter "FullyQualifiedName~ScanGeometryTests"`
+  - One test: `dotnet test --filter "FullyQualifiedName~ClusteringEngineTests.<TestName>"`
 - **Build the plugin (agent-safe):** `dotnet build -c Release` from `ValheimRadar/`, or
   `dotnet build ValheimRadar.slnx -c Release` from the repo root.
 - **Build + auto-deploy for local interactive testing (human use only):**
@@ -58,6 +63,7 @@ This document defines operating guidelines, safety boundaries, and workflows for
   time - never hand-edit a version number in `Thunderstore/manifest.template.json`; bump the
   constant in `RadarPlugin.cs` instead. Override the namespace with
   `-p:ThunderstoreNamespace="YourTeamName"`.
+- There is no linter/formatter config.
 
 ---
 
@@ -65,7 +71,8 @@ This document defines operating guidelines, safety boundaries, and workflows for
 
 All code resides within the `ValheimRadar` root namespace. `Scanning/` tracks three distinct
 kinds of content, each with its own evaluator + scanner pair, plus shared helpers extracted so
-none of the three need to depend on each other:
+none of the three need to depend on each other. Paths below and in the playbooks are relative to
+the `ValheimRadar/` plugin project unless prefixed with `ValheimRadar.Tests/`.
 
 ```text
 ValheimRadar/
@@ -78,7 +85,7 @@ ValheimRadar/
 ├── Pinning/
 │   ├── IconLoader.cs            # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
 │   ├── VanillaIconResolver.cs   # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
-│   └── PinManager.cs            # Minimap pin sync, updates, removals, and icon resolution order
+│   └── PinManager.cs            # Minimap pin sync, updates, removals, persistence, and icon resolution order
 ├── Scanning/
 │   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
 │   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
@@ -93,7 +100,7 @@ ValheimRadar/
 │   ├── ResourceScanner.cs         # Type #2 scan loop, wraps PermanentSpatialScanner
 │   ├── PoiEvaluator.cs            # Type #3 classification: physics-detected POI fallback (used by PoiScanner)
 │   ├── PoiScanner.cs              # Type #3 (physics fallback) scan loop, wraps PermanentSpatialScanner
-│   └── LocationScanner.cs         # Type #3 (preferred): ZoneSystem.GetLocationList()-based POI discovery (dungeons, altars, ruins, etc.)
+│   └── LocationScanner.cs         # Type #3 (preferred): ZoneSystem-based POI discovery (dungeons, altars, ruins, etc.)
 ├── docs/
 │   └── ICONS.md                  # Icon resolution order & override naming, for reference when touching Pinning/
 ├── Thunderstore/
@@ -102,6 +109,54 @@ ValheimRadar/
 
 ValheimRadar.Tests/              # xunit tests mirroring the folders above (Models/, Pinning/, Scanning/)
 ```
+
+### How the pieces fit together
+
+**Three content types, three lifecycles.** `RadarPlugin.Update` runs two independent timers
+(`UpdateInterval` -> `ScanAndPinObjects`; `LocationScanInterval` -> `LocationScanner`), and the
+content types behave differently:
+
+| Type | Scanner | Behavior | Pin store |
+|---|---|---|---|
+| #1 creatures | `CreatureScanner` -> `SpatialCellScanner` | Rotating per-cell cache, re-queried forever; fully reclustered every tick | `PinManager.SyncTransientClusters` - in memory only |
+| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | Each cell scanned **once, ever**; returns only newly found points | `rawPersistentPoints` (keyed by ZDOID), clustered incrementally, saved to disk |
+| #3 Locations (dungeons, altars, ruins...) | `LocationScanner` | Reads `ZoneSystem`, no physics | `rawLocationPoints`, one pin per Location, no clustering, saved to disk |
+
+**State and persistence.** `PinManager` is a static class holding all pin state. Persistence is
+pipe-delimited text (Unity's `JsonUtility` isn't referenced) at
+`BepInEx/config/ValheimRadar/PinData/<world>.txt` and `<world>.locations.txt`. Every
+`Reset()`/`ClearAllPins()` must run on disconnect so static state never leaks between worlds -
+when adding a new scanner or cache, wire it into both reset sites in `RadarPlugin`.
+
+**`categoryKey` is the join key.** Scanners emit `creature:<id>`, `resource:<id>` (also used by
+`PoiEvaluator` rules) or `location:<canonicalKey>`. Only the key is persisted, so
+`ObjectEvaluator` re-derives enabled-state and icon from it after a relog or config toggle
+without a live GameObject. Any new category must be resolvable through
+`ObjectEvaluator.IsCategoryEnabled`/`GetDefaultIconForCategory`/`GetVanillaIconForCategory`, or
+its pins will vanish or lose their icon on reload.
+
+**Scan cells are Valheim zones.** `ScanGeometry.CellSize` is 64 m and cells are *centered* on
+multiples of 64 (`GetCellIndex` = `floor((v+32)/64)`), mirroring `ZoneSystem.GetZone`. Don't
+change either without re-checking the decompiled game - misalignment makes one cell straddle up
+to four zones. `PermanentSpatialScanner` also skips a cell until `ZNetScene.IsAreaReady` says
+its GameObjects have instantiated; marking a cell "scanned" before that permanently drops
+resources on dedicated servers.
+
+**Dedicated-server vs host paths in `LocationScanner`.** `ZoneSystem.GetLocationList()` is only
+populated where `ZNet.IsServer()` (host/singleplayer). Plain clients must instead read
+`LocationProxy` objects and map their ZDO's hashed prefab name back through
+`ZoneSystem.m_locations`. Anything Location-related has to work on both paths, and neither can
+be tested via `dotnet test`.
+
+**Jotunn is a hard dependency, used only for icons** (`IconLoader`, `VanillaIconResolver`;
+resolution order in `docs/ICONS.md`). Jotunn's lazy `AssetManager` init can throw on some mod
+lists, so `VanillaIconResolver.TryResolveIcon` latches vanilla lookups off for the session
+instead of crashing the scan loop. Keep any new Jotunn call behind that kind of guard.
+
+**Tests cover pure logic only** (evaluator matching, clustering, cell geometry, config,
+icon-name tables). Code that needs `Physics`, `ZNetScene`, `ZoneSystem` or `Minimap` can't run
+under xunit, so keep decision logic in testable static methods and leave in-game behavior to
+the manual PR checklist.
 
 ---
 
@@ -193,17 +248,41 @@ is the **single source of truth** - `Thunderstore/Pack.ps1` reads that constant 
 time, so there is nowhere else to update by hand (no `manifest.json` version to keep in sync).
 
 **Every change that touches code under `ValheimRadar/` (anything other than a docs-only edit) must
-bump `PluginVersion` as part of the same change.** Bump exactly one segment - whichever tier matches
-the *most significant* part of the diff - and follow standard semver rollover (bumping MINOR resets
-PATCH to 0; bumping MAJOR resets MINOR and PATCH to 0):
+bump `PluginVersion` as part of the same change.** Bump exactly one segment and follow standard
+semver rollover (bumping MINOR resets PATCH to 0; bumping MAJOR resets MINOR and PATCH to 0; PATCH
+has no upper limit, so `1.7.9` -> `1.7.10` is correct).
+
+**PATCH is the default. Only pick MINOR or MAJOR when the change clearly meets that tier's
+definition below - "it's a fairly big diff" or "it touches performance" is not enough. When in
+doubt, PATCH.**
 
 - **MAJOR** - fully new functionality, or the removal of core functionality. Example: adding a new
   scanner/evaluator type, dropping an entire tracked category outright, a save-format change with no
   migration path.
-- **MINOR** - performance changes, and smaller feature additions or removals. Example: adding a new
-  trackable entity to an existing category, reorganizing/renaming config toggles, splitting or
-  merging an existing toggle (e.g. Chests -> Chests + Buried Chests), tuning scan performance.
-- **PATCH** - documentation, cleanup/refactors with no behavior change, small bug fixes.
+- **MINOR** - a user-facing capability or a config/save-data change that a user would need to be
+  told about. It must meet at least one of these:
+  - A new tracked **group/category** of content, or a new user-facing feature (e.g. a new pin
+    type, a new scan mode).
+  - A config key is **renamed, removed, split, or merged**, so existing users' `.cfg` files or
+    saved pin data are affected (e.g. Chests -> Chests + Buried Chests).
+  - A deliberate change to **what gets pinned or when**, visible to the user (e.g. changed
+    default `ScanRadius`, a different discovery model), including when it is delivered as a
+    performance change.
+- **PATCH** - everything else, including:
+  - Bug fixes of any size: missing/wrong icons, wrong names or aliases, pins that fail to appear
+    or persist, dedicated-server fixes, crash/guard fixes.
+  - Adding or tweaking entries **inside an existing group** (a new creature/resource/Location
+    alias, its config toggle, its icon), moving a toggle between groups **without renaming its
+    key**.
+  - Performance work and internal alignment/optimization that doesn't change what gets pinned, when
+    it's pinned, or any config key (e.g. tuning scan cell size, batching, caching).
+  - Refactors, cleanup, logging, tests, and documentation.
+
+A PR that bundles a fix or small tweak with unrelated small changes is still **PATCH**. Bump MINOR
+only when a MINOR-qualifying change is the actual point of the PR, not just one line of it.
+
+Past examples: the missing Guck Sack/Surtling icon fix (#23) and the internal scan-cell/zone-grid
+alignment (#37) were both released as v1.8.0, but are PATCH under this policy.
 
 When opening a PR for a change that bumps the version, **include the new version number in the PR
 title** (e.g. `Split chest tracking into above-ground/buried (v1.8.0)`), so the version bump is
