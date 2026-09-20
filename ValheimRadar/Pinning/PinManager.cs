@@ -23,8 +23,8 @@ namespace ValheimRadar
 
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
 
-        // Every persistent (resource/structure) point ever discovered this session, keyed by its
-        // stable ZDOID. Source of truth for persistentClusters below, which is what pins are actually
+        // Every persistent (resource/structure) point ever discovered, keyed by its ZDOID (a hint, not
+        // proof of identity - see PersistedPointRules/TryStoreRawPoint). Source of truth for persistentClusters below, which is what pins are actually
         // synced from (see RecordRawPoints/SyncPersistentClusters). Points are recorded regardless of
         // whether their category is currently enabled (see ObjectEvaluator) so re-enabling a category
         // later immediately repopulates already-scanned ground instead of requiring the player to walk
@@ -68,16 +68,11 @@ namespace ValheimRadar
         // activeClusterPins against the full new key set, once.
         private static bool persistentFullResyncPending;
 
-        // A newly-recorded point is treated as "already known" if it lands within this radius of an
-        // existing point of the same DisplayName, even when its ZDOID doesn't match any recorded key.
-        // This is deliberately much smaller than ClusterDistance (which groups genuinely distinct
-        // nearby objects into one pin) - it exists only to catch the same physical object being
-        // rediscovered. Some world-generated objects (observed with wild Beehives) aren't given a
-        // ZDOID that's stable across game sessions, so a ZDOID-only dedup lets the same spot get
-        // recorded as a brand new point on every relog, permanently inflating that cluster's count by
-        // one each time. Deterministically-placed objects reappear at the exact same position, so a
-        // tight proximity check catches this without risking merging two real, distinct objects.
-        private const float DuplicatePointRadius = 0.25f;
+        // A newly-recorded point is treated as "already known" if it lands within
+        // PersistedPointRules.DuplicatePointRadius of an existing point of the same DisplayName, even
+        // when its ZDOID doesn't match any recorded key - ZDOIDs aren't stable across game/server
+        // sessions (observed with wild Beehives; see PersistedPointRules for why), so position is
+        // the identity that actually persists.
 
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar");
         private static string PinDataFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar", "PinData");
@@ -125,11 +120,7 @@ namespace ValheimRadar
             {
                 if (!item.IsPersistent) continue;
 
-                string key = RawPointKey(item.Zdoid);
-                if (rawPersistentPoints.ContainsKey(key)) continue;
-                if (IsDuplicatePosition(item)) continue;
-
-                rawPersistentPoints[key] = item;
+                if (!TryStoreRawPoint(item)) continue;
                 rawPointsDirty = true;
 
                 ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, item, maxDistance);
@@ -162,13 +153,38 @@ namespace ValheimRadar
         {
             foreach (var existing in rawPersistentPoints.Values)
             {
-                if (existing.DisplayName == item.DisplayName && Vector3.Distance(existing.Position, item.Position) <= DuplicatePointRadius)
+                if (PersistedPointRules.IsDuplicate(existing.DisplayName, existing.Position, item.DisplayName, item.Position))
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        // Adds item to rawPersistentPoints unless it's already known; returns whether it was added.
+        // Shared by live scans (RecordRawPoints) and save-file loads (LoadWorldPins) so both apply the
+        // exact same identity rules. The ZDOID-derived key is only a hint - ZDOIDs are re-assigned
+        // when a server reloads its world, so a key match only means "same object" if the position
+        // agrees too; otherwise the point is new and is stored under a disambiguated key instead of
+        // being silently skipped. See PersistedPointRules.
+        private static bool TryStoreRawPoint(TrackedItem item)
+        {
+            string key = RawPointKey(item.Zdoid);
+            bool keyTaken = rawPersistentPoints.TryGetValue(key, out TrackedItem atKey);
+
+            PersistedPointRules.KeyResolution resolution = PersistedPointRules.ResolveKey(keyTaken, keyTaken ? atKey.Position : default, item.Position);
+            if (resolution == PersistedPointRules.KeyResolution.AlreadyKnown) return false;
+            if (IsDuplicatePosition(item)) return false;
+
+            if (resolution == PersistedPointRules.KeyResolution.KeyCollision)
+            {
+                key = PersistedPointRules.DisambiguateKey(key, item.Position);
+                if (rawPersistentPoints.ContainsKey(key)) return false;
+            }
+
+            rawPersistentPoints[key] = item;
+            return true;
         }
 
         // Re-derives which categories should currently be visible and adds/removes minimap pins
@@ -658,14 +674,15 @@ namespace ValheimRadar
             // store dirty so the next save rewrites the file without it - self-healing the save file
             // over time instead of carrying the old duplicates forward forever.
             //
-            // Also covers points whose ZDO no longer exists at all (e.g. a boss arena's stone pillars,
-            // saved as persistent "AbandonedRuins"/"StoneRings" pins before BatchScanner's scan-volume
-            // fix and ObjectEvaluator's debris-name filter existed, then shattered and removed from the
-            // world on the boss's death). If ZDOMan hasn't fully synced yet this early after connecting
-            // (possible on a dedicated-server client, never on a hosted/singleplayer world, where
-            // ZDOMan is already fully authoritative at this point) a still-real distant point could be
-            // dropped by mistake - but nothing is lost: the next real scan near it just re-adds it, the
-            // same as any other not-yet-(re)scanned ground.
+            // Deliberately does NOT check whether each point's ZDO still exists in ZDOMan (an earlier
+            // version did, to shed e.g. a boss arena's shattered stone pillars). On a dedicated-server
+            // client ZDOMan only holds the sectors the server has streamed so far - essentially just the
+            // area around the player right after connecting - so that check discarded every persisted
+            // point further away on every reconnect, and since dropping marks the store dirty the save
+            // file was then rewritten without them, permanently losing the player's whole map (issue
+            // #42). ZDOIDs are also re-assigned whenever a server reloads its world, so the lookup
+            // couldn't prove anything even when ZDOMan was complete. Pins for objects that no longer
+            // exist are the lesser evil next to losing valid ones; see PersistedPointRules.
             bool droppedDuplicate = false;
             int migratedCount = 0;
             int unmigratableCount = 0;
@@ -714,12 +731,9 @@ namespace ValheimRadar
                         migratedCount++;
                     }
 
-                    ZDOID zdoid = new ZDOID(userId, id);
-                    string key = RawPointKey(zdoid);
-
                     TrackedItem candidate = new TrackedItem
                     {
-                        Zdoid = zdoid,
+                        Zdoid = new ZDOID(userId, id),
                         Position = new Vector3(x, y, z),
                         DisplayName = displayName,
                         RawName = rawName,
@@ -727,13 +741,7 @@ namespace ValheimRadar
                         CategoryKey = categoryKey
                     };
 
-                    if (rawPersistentPoints.ContainsKey(key) || IsDuplicatePosition(candidate))
-                    {
-                        droppedDuplicate = true;
-                        continue;
-                    }
-
-                    if (ZDOMan.instance == null || ZDOMan.instance.GetZDO(zdoid) == null)
+                    if (!TryStoreRawPoint(candidate))
                     {
                         droppedDuplicate = true;
                         continue;
@@ -744,8 +752,6 @@ namespace ValheimRadar
                     candidate.Icon = string.IsNullOrEmpty(iconPng)
                         ? null
                         : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
-
-                    rawPersistentPoints[key] = candidate;
                 }
 
                 rawPointsDirty = droppedDuplicate || migratedCount > 0 || unmigratableCount > 0;
