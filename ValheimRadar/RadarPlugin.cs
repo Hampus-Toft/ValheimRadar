@@ -1,4 +1,5 @@
 using BepInEx;
+using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -22,6 +23,7 @@ namespace ValheimRadar
         private float saveTimer = 0f;
         private bool wasActive = false;
         private string currentWorldName;
+        private Harmony harmony;
 
         private static float ClusterDistance => RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
 
@@ -29,11 +31,24 @@ namespace ValheimRadar
         {
             RadarConfig.Initialize(Config);
             Config.SettingChanged += OnConfigurationChanged;
+
+            try
+            {
+                harmony = new Harmony(PluginGUID);
+                harmony.PatchAll(typeof(MinimapPatches));
+            }
+            catch (Exception ex)
+            {
+                // Only manual pin removal depends on the patch - the rest of the plugin works without it.
+                Logger.LogError($"Failed to apply Minimap patches (right-click pin removal disabled): {ex}");
+            }
+
             Logger.LogInfo($"{PluginName} initialized!");
         }
 
         private void OnDestroy()
         {
+            harmony?.UnpatchSelf();
             Config.SettingChanged -= OnConfigurationChanged;
             PinManager.SaveWorldPins(currentWorldName);
             PinManager.SaveLocationPins(currentWorldName);
@@ -46,6 +61,14 @@ namespace ValheimRadar
 
         private void OnConfigurationChanged(object sender, EventArgs e)
         {
+            // "Restore Dismissed Pins" acts as a button: bring back every dismissed pin, then reset the
+            // toggle (which re-enters this handler once with the value false, doing nothing here).
+            if (RadarConfig.ClearDismissedPins != null && RadarConfig.ClearDismissedPins.Value)
+            {
+                RadarConfig.ClearDismissedPins.Value = false;
+                PinManager.RestoreDismissedPins(Minimap.instance);
+            }
+
             // Re-derive which categories should be visible and add/remove their minimap pins
             // accordingly - cached cluster positions are never discarded here, so re-enabling a
             // category instantly redraws its pins at their last known location instead of waiting
@@ -92,6 +115,8 @@ namespace ValheimRadar
                 // ClusterDistance change uses, so a reloaded pin is never out of step with what the
                 // next real scan would produce.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
+                MinimapMarkerOrder.Apply(Minimap.instance);
+                PinManager.LoadDismissedPins(currentWorldName);
                 PinManager.LoadWorldPins(currentWorldName);
                 PinManager.RebuildPersistentClusters(ClusterDistance);
                 PinManager.SyncPersistentClusters(Minimap.instance);

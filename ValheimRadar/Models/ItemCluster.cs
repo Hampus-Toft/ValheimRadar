@@ -33,6 +33,71 @@ namespace ValheimRadar
             return Items.Count > 1 ? $"{Items.Count}x {DisplayName}" : DisplayName;
         }
 
+        // Label variant used by PinManager: when hideName is true the species/type name is dropped and
+        // only the count and rolled star rating remain (see BuildLabel).
+        public string GetLabel(bool hideName) => BuildLabel(DisplayName, Items.Count, hideName);
+
+        // Pure label builder. With hideName == false this is exactly the historic label ("Boar (★★)",
+        // "2x Boar (★★)"). With hideName == true the name is removed but the count and star rating are
+        // preserved: "2x ★★" for a 2-pin cluster of 2-star creatures, "★★" for a single one, "2x" for two
+        // unstarred, and an empty string for a single unstarred creature (the icon alone identifies it).
+        public static string BuildLabel(string displayName, int count, bool hideName)
+        {
+            if (string.IsNullOrEmpty(displayName)) displayName = string.Empty;
+
+            if (!hideName)
+            {
+                return count > 1 ? $"{count}x {displayName}" : displayName;
+            }
+
+            TrySplitStarSuffix(displayName, out _, out string stars);
+            if (count > 1)
+            {
+                return stars.Length > 0 ? $"{count}x {stars}" : $"{count}x";
+            }
+
+            return stars;
+        }
+
+        // CreatureEvaluator appends " (★★)" (one ★ per rolled star) to a starred creature's display name.
+        // Splits that suffix back off. Returns false (baseName == displayName, stars == "") when there is
+        // no star suffix - including a name that merely ends in some other parenthesised text.
+        public static bool TrySplitStarSuffix(string displayName, out string baseName, out string stars)
+        {
+            baseName = displayName ?? string.Empty;
+            stars = string.Empty;
+
+            if (baseName.Length < 5 || baseName[baseName.Length - 1] != ')') return false;
+
+            int open = baseName.LastIndexOf(" (", System.StringComparison.Ordinal);
+            if (open < 0) return false;
+
+            string inner = baseName.Substring(open + 2, baseName.Length - open - 3);
+            if (inner.Length == 0) return false;
+
+            foreach (char c in inner)
+            {
+                if (c != '★') return false;
+            }
+
+            stars = inner;
+            baseName = baseName.Substring(0, open);
+            return true;
+        }
+
+        // True when a pin's name should be dropped from its label (issue: icons already identify
+        // creatures, so names are clutter). Only species-specific creature categories qualify, and only
+        // when an icon actually resolved - a pin with no icon, or one of the generic unlisted-creature
+        // fallbacks ("creature:_monster"/"creature:_animal", which share one generic icon), would
+        // otherwise be unidentifiable. Resources and Locations always keep their names.
+        public static bool ShouldHideCreatureName(string categoryKey, bool hasIcon, bool showCreatureNames)
+        {
+            if (showCreatureNames || !hasIcon || string.IsNullOrEmpty(categoryKey)) return false;
+            if (!categoryKey.StartsWith("creature:", System.StringComparison.Ordinal)) return false;
+
+            return !categoryKey.StartsWith("creature:_", System.StringComparison.Ordinal);
+        }
+
         // Keyed on the cluster's spatial location (quantized to the clustering distance), not the
         // exact set of member ZDOIDs. Which individual items land inside a stationary resource
         // cluster on any given scan tick is volatile - it depends on scan-radius timing, ZDO load
