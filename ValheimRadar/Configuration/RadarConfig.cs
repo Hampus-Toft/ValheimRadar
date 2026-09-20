@@ -135,7 +135,10 @@ namespace ValheimRadar
         public static readonly CreatureDefinition[] CreatureDefinitions =
         {
             // MEADOWS
-            new CreatureDefinition("boar", new[] { "boar" }, "Boar", SecMeadows, isMonster: false, tameable: true),
+            // "boar_piggy" is the baby boar (loca "Piggy") that grows into a Boar once tamed and fed -
+            // it must share the adult's definition (toggle, star filter, TrophyBoar icon) rather than
+            // fall through to the generic bucket, where it has no icon of its own.
+            new CreatureDefinition("boar", new[] { "boar", "boar_piggy" }, "Boar", SecMeadows, isMonster: false, tameable: true),
             new CreatureDefinition("neck", new[] { "neck" }, "Neck", SecMeadows, isMonster: false),
             new CreatureDefinition("deer", new[] { "deer", "deer_white" }, "Deer", SecMeadows, isMonster: false),
             new CreatureDefinition("greyling", new[] { "greyling" }, "Greyling", SecMeadows, isMonster: true),
@@ -151,9 +154,16 @@ namespace ValheimRadar
             new CreatureDefinition("draugr", new[] { "draugr", "draugr_ranged" }, "Draugr", SecSwamp, isMonster: true),
             new CreatureDefinition("draugr_elite", new[] { "draugr_elite" }, "Draugr Elite", SecSwamp, isMonster: true),
             new CreatureDefinition("blob", new[] { "blob" }, "Blob", SecSwamp, isMonster: true),
-            new CreatureDefinition("blob_elite", new[] { "blob_elite" }, "Poison Blob", SecSwamp, isMonster: true),
+            // Real prefab is "BlobElite" (loca $enemy_blobelite -> "Oozer") - "blob_elite" is not a
+            // real prefab name, which is why this never matched in-game. The canonical key and the
+            // "Poison Blob" display name are deliberately unchanged: DisplayName is the user-visible
+            // config key, so renaming it would silently reset existing users' toggle.
+            new CreatureDefinition("blob_elite", new[] { "blobelite" }, "Poison Blob", SecSwamp, isMonster: true),
             new CreatureDefinition("leech", new[] { "leech" }, "Leech", SecSwamp, isMonster: true),
             new CreatureDefinition("wraith", new[] { "wraith" }, "Wraith", SecSwamp, isMonster: true),
+            // Bog Witch-related undead ("defeated_writhan" global key, loca $enemy_writhan). Distinct
+            // prefab from "Wraith" despite the similar name; has its own TrophyWrithan sprite.
+            new CreatureDefinition("writhan", new[] { "writhan" }, "Writhan", SecSwamp, isMonster: true),
             new CreatureDefinition("abomination", new[] { "abomination" }, "Abomination", SecSwamp, isMonster: true),
 
             // MOUNTAIN
