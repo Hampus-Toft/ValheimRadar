@@ -12,6 +12,13 @@ places clustered pins on the in-game minimap so you always know what's close by.
   ground pickables, ores, functional structures, and ruins/locations.
 - Resource and structure pins persist per-world between sessions, so
   previously discovered locations reappear immediately after reconnecting.
+- Right-click a resource or location pin on the large map to dismiss it (e.g.
+  to mark a dungeon as explored). Dismissed pins stay hidden for that world
+  across sessions; use the "Restore Dismissed Pins" setting to bring them back.
+  Live creature pins can't be dismissed.
+- Creature pins show only count and star rating by default (the icon already
+  identifies the creature); enable "Show Creature Names" to restore names.
+- Your own map marker is drawn on top of all pins.
 - All settings are exposed as standard BepInEx config entries, so they work
   out of the box with [Configuration Manager](https://thunderstore.io/c/valheim/p/shudnal/ConfigurationManager/).
 

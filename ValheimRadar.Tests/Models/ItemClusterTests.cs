@@ -54,6 +54,72 @@ namespace ValheimRadar.Tests.Models
             Assert.Equal("3x Dandelion", cluster.GetLabel());
         }
 
+        [Theory]
+        [InlineData("Boar", 1, "Boar")]
+        [InlineData("Boar", 3, "3x Boar")]
+        [InlineData("Boar (★★)", 1, "Boar (★★)")]
+        [InlineData("Boar (★★)", 2, "2x Boar (★★)")]
+        [InlineData(null, 1, "")]
+        public void BuildLabel_NamesShown_MatchesHistoricLabel(string displayName, int count, string expected)
+        {
+            Assert.Equal(expected, ItemCluster.BuildLabel(displayName, count, hideName: false));
+        }
+
+        [Theory]
+        [InlineData("Boar", 1, "")]
+        [InlineData("Boar", 2, "2x")]
+        [InlineData("Boar (★★)", 1, "★★")]
+        [InlineData("Boar (★★)", 2, "2x ★★")]
+        [InlineData("Greydwarf Shaman (★)", 5, "5x ★")]
+        [InlineData("Greydwarf Brute", 1, "")]
+        public void BuildLabel_NamesHidden_KeepsCountAndStarsOnly(string displayName, int count, string expected)
+        {
+            Assert.Equal(expected, ItemCluster.BuildLabel(displayName, count, hideName: true));
+        }
+
+        [Fact]
+        public void GetLabel_HideNameOverload_UsesItemCount()
+        {
+            var cluster = new ItemCluster { DisplayName = "Wolf (★★)" };
+            cluster.Items.Add(Item(Vector3.zero));
+            cluster.Items.Add(Item(Vector3.zero));
+
+            Assert.Equal("2x ★★", cluster.GetLabel(hideName: true));
+            Assert.Equal("2x Wolf (★★)", cluster.GetLabel(hideName: false));
+        }
+
+        [Theory]
+        [InlineData("Boar (★★)", true, "Boar", "★★")]
+        [InlineData("Boar", false, "Boar", "")]
+        [InlineData("Boar ()", false, "Boar ()", "")]
+        [InlineData("Boar (Elite)", false, "Boar (Elite)", "")]
+        [InlineData("(★)", false, "(★)", "")]
+        [InlineData("", false, "", "")]
+        public void TrySplitStarSuffix_OnlySplitsStarSuffix(string displayName, bool expectedResult, string expectedBase, string expectedStars)
+        {
+            bool result = ItemCluster.TrySplitStarSuffix(displayName, out string baseName, out string stars);
+
+            Assert.Equal(expectedResult, result);
+            Assert.Equal(expectedBase, baseName);
+            Assert.Equal(expectedStars, stars);
+        }
+
+        [Theory]
+        [InlineData("creature:boar", true, false, true)]
+        [InlineData("creature:fish_perch", true, false, true)]
+        [InlineData("creature:boar", false, false, false)]      // no icon -> keep name
+        [InlineData("creature:boar", true, true, false)]        // user opted in to names
+        [InlineData("creature:_monster", true, false, false)]   // generic fallback icon -> keep name
+        [InlineData("creature:_animal", true, false, false)]
+        [InlineData("resource:Dandelion", true, false, false)]  // never touch resources
+        [InlineData("location:crypt", true, false, false)]
+        [InlineData(null, true, false, false)]
+        [InlineData("", true, false, false)]
+        public void ShouldHideCreatureName_OnlyForIdentifiableCreaturePins(string categoryKey, bool hasIcon, bool showNames, bool expected)
+        {
+            Assert.Equal(expected, ItemCluster.ShouldHideCreatureName(categoryKey, hasIcon, showNames));
+        }
+
         [Fact]
         public void GetClusterKey_EmptyItems_ReturnsEmptyString()
         {
