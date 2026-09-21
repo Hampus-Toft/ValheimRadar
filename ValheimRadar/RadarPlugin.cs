@@ -1,4 +1,5 @@
 using BepInEx;
+using HarmonyLib;
 using System;
 using System.Collections.Generic;
 using UnityEngine;
@@ -11,17 +12,25 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.8.0";
+        public const string PluginVersion = "1.9.1";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
         private const float PersistSaveInterval = 30f;
 
+        // Troubleshooting only (RadarConfig.DiagnosticLogging): while the large map is open, log the pin-name
+        // state a few times per session, never continuously.
+        private const float DiagnosticInterval = 8f;
+        private const int MaxDiagnosticLogs = 6;
+
+        private float diagnosticTimer = 0f;
+        private int diagnosticLogCount = 0;
         private float timer = 0f;
         private float locationTimer = 0f;
         private float saveTimer = 0f;
         private bool wasActive = false;
         private string currentWorldName;
+        private Harmony harmony;
 
         private static float ClusterDistance => RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
 
@@ -29,11 +38,24 @@ namespace ValheimRadar
         {
             RadarConfig.Initialize(Config);
             Config.SettingChanged += OnConfigurationChanged;
+
+            try
+            {
+                harmony = new Harmony(PluginGUID);
+                harmony.PatchAll(typeof(MinimapPatches));
+            }
+            catch (Exception ex)
+            {
+                // Only manual pin removal depends on the patch - the rest of the plugin works without it.
+                Logger.LogError($"Failed to apply Minimap patches (right-click pin removal disabled): {ex}");
+            }
+
             Logger.LogInfo($"{PluginName} initialized!");
         }
 
         private void OnDestroy()
         {
+            harmony?.UnpatchSelf();
             Config.SettingChanged -= OnConfigurationChanged;
             PinManager.SaveWorldPins(currentWorldName);
             PinManager.SaveLocationPins(currentWorldName);
@@ -46,6 +68,14 @@ namespace ValheimRadar
 
         private void OnConfigurationChanged(object sender, EventArgs e)
         {
+            // "Restore Dismissed Pins" acts as a button: bring back every dismissed pin, then reset the
+            // toggle (which re-enters this handler once with the value false, doing nothing here).
+            if (RadarConfig.ClearDismissedPins != null && RadarConfig.ClearDismissedPins.Value)
+            {
+                RadarConfig.ClearDismissedPins.Value = false;
+                PinManager.RestoreDismissedPins(Minimap.instance);
+            }
+
             // Re-derive which categories should be visible and add/remove their minimap pins
             // accordingly - cached cluster positions are never discarded here, so re-enabling a
             // category instantly redraws its pins at their last known location instead of waiting
@@ -92,6 +122,13 @@ namespace ValheimRadar
                 // ClusterDistance change uses, so a reloaded pin is never out of step with what the
                 // next real scan would produce.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
+                diagnosticTimer = 0f;
+                diagnosticLogCount = 0;
+                if (RadarConfig.RaisePlayerMarker == null || RadarConfig.RaisePlayerMarker.Value)
+                {
+                    MinimapMarkerOrder.Apply(Minimap.instance);
+                }
+                PinManager.LoadDismissedPins(currentWorldName);
                 PinManager.LoadWorldPins(currentWorldName);
                 PinManager.RebuildPersistentClusters(ClusterDistance);
                 PinManager.SyncPersistentClusters(Minimap.instance);
@@ -113,6 +150,17 @@ namespace ValheimRadar
                 locationTimer = 0f;
                 List<TrackedLocation> newLocations = LocationScanner.ScanLocations();
                 if (newLocations.Count > 0) PinManager.RecordAndSyncLocations(Minimap.instance, newLocations);
+            }
+
+            if (Minimap.instance.m_mode == Minimap.MapMode.Large && (RadarConfig.DiagnosticLogging == null || RadarConfig.DiagnosticLogging.Value))
+            {
+                diagnosticTimer += Time.deltaTime;
+                if (diagnosticTimer >= DiagnosticInterval && diagnosticLogCount < MaxDiagnosticLogs)
+                {
+                    diagnosticTimer = 0f;
+                    diagnosticLogCount++;
+                    PinManager.LogNameDiagnostics(Minimap.instance);
+                }
             }
 
             saveTimer += Time.deltaTime;

@@ -25,11 +25,15 @@ namespace ValheimRadar
 
         internal static bool ShouldReject(GameObject go, string nameLower)
         {
-            if (NameFormatting.ContainsAny(nameLower, DebrisNameMarkers)) return true;
+            if (IsDebrisName(nameLower)) return true;
             if (IsInsideDungeonInterior(go.transform.position)) return true;
 
             return false;
         }
+
+        // Name-only half of ShouldReject, split out so it can be unit tested without a live
+        // GameObject/ZoneSystem.
+        internal static bool IsDebrisName(string nameLower) => NameFormatting.ContainsAny(nameLower, DebrisNameMarkers);
 
         private static bool IsInsideDungeonInterior(Vector3 position)
         {

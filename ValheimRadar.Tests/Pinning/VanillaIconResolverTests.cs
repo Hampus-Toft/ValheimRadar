@@ -43,6 +43,48 @@ namespace ValheimRadar.Tests.Pinning
         }
 
         [Fact]
+        public void GetCreatureTrophySprite_Writhan_ResolvesToOwnTrophySprite()
+        {
+            // Writhan has its own TrophyWrithan sprite; before it had no definition or icon entry it
+            // matched only the generic hostile-monster bucket and showed the bare default pin.
+            Assert.True(RadarConfig.AliasLookup.ContainsKey("writhan"));
+            Assert.Equal("TrophyWrithan", VanillaIconResolver.GetCreatureTrophySprite("writhan"));
+        }
+
+        [Fact]
+        public void GetCreatureTrophySprite_Oozer_ReusesBlobTrophy()
+        {
+            // "Oozer" is the in-game name of the BlobElite prefab, which has no trophy sprite of its
+            // own - it reuses the Blob trophy.
+            Assert.Equal("TrophyBlob", VanillaIconResolver.GetCreatureTrophySprite("blob_elite"));
+        }
+
+        // Baby -> adult pairs taken from the game's own Growup components (baby prefab grows into
+        // adult prefab). Each baby must resolve to the same vanilla sprite as its adult so a
+        // juvenile tamed animal never renders icon-less. Species with a RadarConfig definition
+        // resolve through their canonical key; the rest through the raw prefab-name fallback.
+        [Theory]
+        [InlineData("boar_piggy", "boar", "TrophyBoar")]
+        [InlineData("wolf_cub", "wolf", "TrophyWolf")]
+        [InlineData("lox_calf", "lox", "TrophyLox")]
+        public void BabyPrefab_ResolvesToSameSpriteAsAdult_ViaCreatureDefinition(string babyPrefab, string adultPrefab, string expectedSprite)
+        {
+            Assert.True(RadarConfig.AliasLookup.TryGetValue(babyPrefab, out var babyDef));
+            Assert.True(RadarConfig.AliasLookup.TryGetValue(adultPrefab, out var adultDef));
+            Assert.Same(adultDef, babyDef);
+            Assert.Equal(expectedSprite, VanillaIconResolver.GetCreatureTrophySprite(babyDef.CanonicalKey));
+        }
+
+        [Theory]
+        [InlineData("asksvin_hatchling", "asksvin", "TrophyAsksvin")]
+        [InlineData("moose_calf", "moose", "TrophyMoose")]
+        public void BabyPrefab_ResolvesToSameSpriteAsAdult_ViaRawPrefabName(string babyPrefab, string adultPrefab, string expectedSprite)
+        {
+            Assert.Equal(expectedSprite, VanillaIconResolver.GetCreatureTrophySprite(adultPrefab));
+            Assert.Equal(VanillaIconResolver.GetCreatureTrophySprite(adultPrefab), VanillaIconResolver.GetCreatureTrophySprite(babyPrefab));
+        }
+
+        [Fact]
         public void GetCreatureTrophySprite_Fish_ResolvesToPerSpeciesItemIcon()
         {
             // Fish are ItemDrop-based, not Character trophies, so they're mapped to their own

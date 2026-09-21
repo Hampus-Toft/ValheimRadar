@@ -135,7 +135,10 @@ namespace ValheimRadar
         public static readonly CreatureDefinition[] CreatureDefinitions =
         {
             // MEADOWS
-            new CreatureDefinition("boar", new[] { "boar" }, "Boar", SecMeadows, isMonster: false, tameable: true),
+            // "boar_piggy" is the baby boar (loca "Piggy") that grows into a Boar once tamed and fed -
+            // it must share the adult's definition (toggle, star filter, TrophyBoar icon) rather than
+            // fall through to the generic bucket, where it has no icon of its own.
+            new CreatureDefinition("boar", new[] { "boar", "boar_piggy" }, "Boar", SecMeadows, isMonster: false, tameable: true),
             new CreatureDefinition("neck", new[] { "neck" }, "Neck", SecMeadows, isMonster: false),
             new CreatureDefinition("deer", new[] { "deer", "deer_white" }, "Deer", SecMeadows, isMonster: false),
             new CreatureDefinition("greyling", new[] { "greyling" }, "Greyling", SecMeadows, isMonster: true),
@@ -151,9 +154,16 @@ namespace ValheimRadar
             new CreatureDefinition("draugr", new[] { "draugr", "draugr_ranged" }, "Draugr", SecSwamp, isMonster: true),
             new CreatureDefinition("draugr_elite", new[] { "draugr_elite" }, "Draugr Elite", SecSwamp, isMonster: true),
             new CreatureDefinition("blob", new[] { "blob" }, "Blob", SecSwamp, isMonster: true),
-            new CreatureDefinition("blob_elite", new[] { "blob_elite" }, "Poison Blob", SecSwamp, isMonster: true),
+            // Real prefab is "BlobElite" (loca $enemy_blobelite -> "Oozer") - "blob_elite" is not a
+            // real prefab name, which is why this never matched in-game. The canonical key and the
+            // "Poison Blob" display name are deliberately unchanged: DisplayName is the user-visible
+            // config key, so renaming it would silently reset existing users' toggle.
+            new CreatureDefinition("blob_elite", new[] { "blobelite" }, "Poison Blob", SecSwamp, isMonster: true),
             new CreatureDefinition("leech", new[] { "leech" }, "Leech", SecSwamp, isMonster: true),
             new CreatureDefinition("wraith", new[] { "wraith" }, "Wraith", SecSwamp, isMonster: true),
+            // Bog Witch-related undead ("defeated_writhan" global key, loca $enemy_writhan). Distinct
+            // prefab from "Wraith" despite the similar name; has its own TrophyWrithan sprite.
+            new CreatureDefinition("writhan", new[] { "writhan" }, "Writhan", SecSwamp, isMonster: true),
             new CreatureDefinition("abomination", new[] { "abomination" }, "Abomination", SecSwamp, isMonster: true),
 
             // MOUNTAIN
@@ -391,6 +401,17 @@ namespace ValheimRadar
         public static ConfigEntry<int> ScanBatchCount;
         public static ConfigEntry<float> LocationScanInterval;
 
+        // Manual pin removal (see PinManager.TryDismissPinAt / Pinning/MinimapPatches.cs). ClearDismissedPins
+        // acts as a button: setting it true un-dismisses everything and RadarPlugin resets it to false.
+        public static ConfigEntry<bool> EnablePinRemoval;
+        public static ConfigEntry<bool> ClearDismissedPins;
+
+        // Troubleshooting switches. RaisePlayerMarker gates the one place the plugin reorders vanilla map UI
+        // (see Pinning/MinimapMarkerOrder.cs); DiagnosticLogging enables the throttled pin-name and
+        // unmapped-Location log lines (PinManager.LogNameDiagnostics, LocationScanner).
+        public static ConfigEntry<bool> RaisePlayerMarker;
+        public static ConfigEntry<bool> DiagnosticLogging;
+
         // Master Group Toggles
         public static ConfigEntry<bool> Group_Creatures;
         public static ConfigEntry<bool> Group_Berries;
@@ -410,6 +431,10 @@ namespace ValheimRadar
         // CreatureDefinition.Tameable) get a star filter; unlisted monsters/animals never do.
         public static ConfigEntry<bool> EnableMonsters;
         public static ConfigEntry<bool> EnableAnimals;
+
+        // When false (default) a creature pin whose icon identifies it drops the species name from its
+        // label and shows only count/stars - see ItemCluster.ShouldHideCreatureName.
+        public static ConfigEntry<bool> ShowCreatureNames;
 
         // Berries
         public static ConfigEntry<bool> TrackRaspberry;
@@ -493,6 +518,11 @@ namespace ValheimRadar
             ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
             LocationScanInterval = Bind(config, "1 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
 
+            EnablePinRemoval = Bind(config, "1 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
+            ClearDismissedPins = Bind(config, "1 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
+            RaisePlayerMarker = Bind(config, "1 - General", "Raise Player Marker", true, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
+            DiagnosticLogging = Bind(config, "1 - General", "Diagnostic Logging", true, "Write a few throttled troubleshooting lines to the BepInEx log (pin name state while the large map is open, and Location prefabs the radar has no definition for). Safe to turn off once nothing needs debugging.");
+
             Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
             Group_Berries = Bind(config, "2 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
             Group_Mushrooms = Bind(config, "2 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
@@ -508,6 +538,7 @@ namespace ValheimRadar
 
             EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
             EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
+            ShowCreatureNames = Bind(config, "3 - Creatures (Defaults)", "Show Creature Names", false, "Show the creature's name in its pin label. When off (default), a creature pin whose icon identifies it shows only the count and star rating (a count like '2x' plus one star character per rolled star). Creatures without a specific icon always keep their name.");
 
             Creatures.Clear();
             foreach (var def in CreatureDefinitions)

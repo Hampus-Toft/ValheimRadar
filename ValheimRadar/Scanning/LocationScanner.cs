@@ -50,6 +50,11 @@ namespace ValheimRadar
         // time (world unload/disconnect).
         private static Dictionary<int, LocationHashEntry> locationHashLookup;
 
+        // Every Location template's prefab name by hash (mapped to a definition or not), and the unmapped
+        // prefab names already reported this world - troubleshooting only, see LogUnmapped.
+        private static Dictionary<int, string> locationPrefabByHash;
+        private static readonly HashSet<string> loggedUnmappedPrefabs = new HashSet<string>();
+
         private readonly struct LocationHashEntry
         {
             public readonly RadarConfig.LocationDefinition Def;
@@ -68,6 +73,19 @@ namespace ValheimRadar
         {
             lastLocationDictCount = -1;
             locationHashLookup = null;
+            locationPrefabByHash = null;
+            loggedUnmappedPrefabs.Clear();
+        }
+
+        // Reports (once per prefab per world) a placed Location the radar has no LocationDefinition for, so a
+        // missing dungeon/ruin variant shows up in the BepInEx log as "location-unmapped prefab=<name>"
+        // instead of silently never getting a pin. Gated by RadarConfig.DiagnosticLogging.
+        private static void LogUnmapped(string prefab)
+        {
+            if (RadarConfig.DiagnosticLogging != null && !RadarConfig.DiagnosticLogging.Value) return;
+            if (string.IsNullOrEmpty(prefab) || !loggedUnmappedPrefabs.Add(prefab)) return;
+
+            Debug.Log($"[ValheimRadar] location-unmapped prefab={prefab}");
         }
 
         public static List<TrackedLocation> ScanLocations()
@@ -93,7 +111,11 @@ namespace ValheimRadar
 
                 string prefabLower = inst.m_location.m_prefabName?.ToLowerInvariant();
                 if (string.IsNullOrEmpty(prefabLower)) continue;
-                if (!RadarConfig.LocationPrefabLookup.TryGetValue(prefabLower, out var def)) continue;
+                if (!RadarConfig.LocationPrefabLookup.TryGetValue(prefabLower, out var def))
+                {
+                    LogUnmapped(prefabLower);
+                    continue;
+                }
 
                 string locationKey = $"{def.CanonicalKey}_{Mathf.RoundToInt(inst.m_position.x)}_{Mathf.RoundToInt(inst.m_position.z)}";
 
@@ -112,20 +134,45 @@ namespace ValheimRadar
             return results;
         }
 
+        // ZoneLocation.Hash resolves m_prefab.Name, which throws KeyNotFoundException (empty AssetID) for
+        // catalog entries with no valid prefab reference. ZoneSystem.SetupLocations() itself only touches
+        // Hash for entries that are enabled or have a valid prefab, so such entries never get a hash in the
+        // game's own lookup and no LocationProxy can point at them - skip them. Left unguarded, the throw
+        // escaped every scan tick and the lookup was never built.
+        private static bool TryGetLocationHash(ZoneSystem.ZoneLocation loc, out int hash)
+        {
+            try
+            {
+                hash = loc.Hash;
+                return true;
+            }
+            catch (System.Exception)
+            {
+                hash = 0;
+                return false;
+            }
+        }
+
         private static Dictionary<int, LocationHashEntry> GetOrBuildHashLookup()
         {
             if (locationHashLookup != null) return locationHashLookup;
 
             var lookup = new Dictionary<int, LocationHashEntry>();
+            var allNames = new Dictionary<int, string>();
             foreach (var loc in ZoneSystem.instance.m_locations)
             {
                 string prefabLower = loc.m_prefabName?.ToLowerInvariant();
                 if (string.IsNullOrEmpty(prefabLower)) continue;
+
+                if (!TryGetLocationHash(loc, out int hash)) continue;
+
+                allNames[hash] = prefabLower;
                 if (!RadarConfig.LocationPrefabLookup.TryGetValue(prefabLower, out var def)) continue;
 
-                lookup[loc.Hash] = new LocationHashEntry(def, prefabLower);
+                lookup[hash] = new LocationHashEntry(def, prefabLower);
             }
 
+            locationPrefabByHash = allNames;
             locationHashLookup = lookup;
             return lookup;
         }
@@ -141,7 +188,11 @@ namespace ValheimRadar
 
                 int locationHash = netView.GetZDO().GetInt(ZDOVars.s_location, 0);
                 if (locationHash == 0) continue;
-                if (!hashLookup.TryGetValue(locationHash, out var entry)) continue;
+                if (!hashLookup.TryGetValue(locationHash, out var entry))
+                {
+                    LogUnmapped(locationPrefabByHash != null && locationPrefabByHash.TryGetValue(locationHash, out string unmappedName) ? unmappedName : $"hash:{locationHash}");
+                    continue;
+                }
 
                 Vector3 pos = proxy.transform.position;
                 string locationKey = $"{entry.Def.CanonicalKey}_{Mathf.RoundToInt(pos.x)}_{Mathf.RoundToInt(pos.z)}";

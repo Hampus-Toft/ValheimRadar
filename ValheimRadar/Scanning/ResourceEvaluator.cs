@@ -98,16 +98,22 @@ namespace ValheimRadar
             new ResourceRule("TinOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tinore"), "ore.png", "TinOre", Const("Tin Ore")),
             new ResourceRule("TinIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tin"), "ore.png", "bar_tin_stack", Const("Tin")),
 
-            // Iron has no confirmed surface "deposit" node in vanilla world-gen - the classic source
-            // is digging mudpile/mudpile2 in Sunken Crypts, which directly drops IronScrap (no
-            // separate vein object). Exact match on "iron" excludes every false-positive that broke
-            // this before (fire_pit_iron, piece_cookingstation_iron, ArmorIronChest, SwordIron,
-            // iron_grate, ...) by construction, since none of those raw names equal "iron".
-            // minerock_iron is a real, registered prefab (MineRock component, matching the
-            // MineRock_Copper/_Tin pattern) but unconfirmed whether vanilla world-gen ever actually
+            // Iron has no confirmed surface "deposit" node in vanilla world-gen - the source is the
+            // "Muddy scrap pile" (hover text $piece_mudpile), which directly drops IronScrap (no
+            // separate vein object). Confirmed by inspecting Valheim's asset bundles: the piles that
+            // world-gen scatters across the SWAMP surface (ZoneSystem vegetation, biome Swamp) are the
+            // prefab "mudpile_beacon" (Destructible + Beacon) - NOT "mudpile"/"mudpile2", which are only
+            // placed inside Sunken Crypts (filtered as dungeon interior by ScanFilters) - so omitting
+            // it left every real swamp pile unpinned (issue #38). "mudpile_old" is a further variant
+            // (MineRock, same hover text). The "mudpile_frac"/"mudpile2_frac" fragments are debris and
+            // stay excluded by ScanFilters' "_frac" marker. Exact match on "iron" excludes every
+            // false-positive that broke this before (fire_pit_iron, piece_cookingstation_iron,
+            // ArmorIronChest, SwordIron, iron_grate, ...) by construction, since none of those raw names
+            // equal "iron". minerock_iron is a real, registered prefab (MineRock component, matching
+            // the MineRock_Copper/_Tin pattern) but unconfirmed whether vanilla world-gen ever actually
             // places it - included defensively since a name that's never placed simply never
             // matches, at no cost.
-            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "ironscrap", "mudpile", "mudpile2", "pickable_bogironore", "minerock_iron"), "ore.png", "ironscrap", Const("Iron Scrap")),
+            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "ironscrap", "mudpile", "mudpile2", "mudpile_old", "mudpile_beacon", "pickable_bogironore", "minerock_iron"), "ore.png", "ironscrap", Const("Iron Scrap")),
             new ResourceRule("IronIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "iron"), "ore.png", null, Const("Iron")),
 
             new ResourceRule("SilverDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silvervein", "silvervein_frac", "rock3_silver", "rock3_silver_frac"), "ore.png", "silverore", Const("Silver Deposit")),

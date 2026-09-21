@@ -23,8 +23,8 @@ namespace ValheimRadar
 
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
 
-        // Every persistent (resource/structure) point ever discovered this session, keyed by its
-        // stable ZDOID. Source of truth for persistentClusters below, which is what pins are actually
+        // Every persistent (resource/structure) point ever discovered, keyed by its ZDOID (a hint, not
+        // proof of identity - see PersistedPointRules/TryStoreRawPoint). Source of truth for persistentClusters below, which is what pins are actually
         // synced from (see RecordRawPoints/SyncPersistentClusters). Points are recorded regardless of
         // whether their category is currently enabled (see ObjectEvaluator) so re-enabling a category
         // later immediately repopulates already-scanned ground instead of requiring the player to walk
@@ -68,16 +68,18 @@ namespace ValheimRadar
         // activeClusterPins against the full new key set, once.
         private static bool persistentFullResyncPending;
 
-        // A newly-recorded point is treated as "already known" if it lands within this radius of an
-        // existing point of the same DisplayName, even when its ZDOID doesn't match any recorded key.
-        // This is deliberately much smaller than ClusterDistance (which groups genuinely distinct
-        // nearby objects into one pin) - it exists only to catch the same physical object being
-        // rediscovered. Some world-generated objects (observed with wild Beehives) aren't given a
-        // ZDOID that's stable across game sessions, so a ZDOID-only dedup lets the same spot get
-        // recorded as a brand new point on every relog, permanently inflating that cluster's count by
-        // one each time. Deterministically-placed objects reappear at the exact same position, so a
-        // tight proximity check catches this without risking merging two real, distinct objects.
-        private const float DuplicatePointRadius = 0.25f;
+        // A newly-recorded point is treated as "already known" if it lands within
+        // PersistedPointRules.DuplicatePointRadius of an existing point of the same DisplayName, even
+        // when its ZDOID doesn't match any recorded key - ZDOIDs aren't stable across game/server
+        // sessions (observed with wild Beehives; see PersistedPointRules for why), so position is
+        // the identity that actually persists.
+
+        // Pins the player dismissed by right-clicking them (see TryDismissPinAt). Recorded per point,
+        // not per cluster, and consulted whenever raw points are (re)clustered or Locations are drawn, so
+        // a dismissed pin never comes back on a later scan tick, recluster or relog. Persisted in its own
+        // sibling file (<world>.dismissed.txt) so existing PinData files stay untouched.
+        private static readonly DismissedPinStore dismissedPins = new DismissedPinStore();
+        private static string dismissedPinsWorld;
 
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar");
         private static string PinDataFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar", "PinData");
@@ -108,6 +110,8 @@ namespace ValheimRadar
             persistentFullResyncPending = false;
             rawLocationPoints.Clear();
             locationPointsDirty = false;
+            dismissedPins.Clear();
+            dismissedPinsWorld = null;
         }
 
         // Merges newly-scanned persistent points into the durable raw store, keyed by ZDOID so the
@@ -125,12 +129,11 @@ namespace ValheimRadar
             {
                 if (!item.IsPersistent) continue;
 
-                string key = RawPointKey(item.Zdoid);
-                if (rawPersistentPoints.ContainsKey(key)) continue;
-                if (IsDuplicatePosition(item)) continue;
-
-                rawPersistentPoints[key] = item;
+                if (!TryStoreRawPoint(item)) continue;
                 rawPointsDirty = true;
+
+                // Still recorded above (so it's never re-discovered as "new"), just never clustered/pinned.
+                if (dismissedPins.Contains(item.CategoryKey, item.Position)) continue;
 
                 ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, item, maxDistance);
                 if (!dirtyPersistentClusters.Contains(affected)) dirtyPersistentClusters.Add(affected);
@@ -147,7 +150,13 @@ namespace ValheimRadar
         public static void RebuildPersistentClusters(float maxDistance)
         {
             persistentClusters.Clear();
-            persistentClusters.AddRange(ClusteringEngine.ClusterItems(new List<TrackedItem>(rawPersistentPoints.Values), maxDistance));
+            var clusterable = new List<TrackedItem>(rawPersistentPoints.Count);
+            foreach (var point in rawPersistentPoints.Values)
+            {
+                if (!dismissedPins.Contains(point.CategoryKey, point.Position)) clusterable.Add(point);
+            }
+
+            persistentClusters.AddRange(ClusteringEngine.ClusterItems(clusterable, maxDistance));
 
             dirtyPersistentClusters.Clear();
             dirtyPersistentClusters.AddRange(persistentClusters);
@@ -162,13 +171,38 @@ namespace ValheimRadar
         {
             foreach (var existing in rawPersistentPoints.Values)
             {
-                if (existing.DisplayName == item.DisplayName && Vector3.Distance(existing.Position, item.Position) <= DuplicatePointRadius)
+                if (PersistedPointRules.IsDuplicate(existing.DisplayName, existing.Position, item.DisplayName, item.Position))
                 {
                     return true;
                 }
             }
 
             return false;
+        }
+
+        // Adds item to rawPersistentPoints unless it's already known; returns whether it was added.
+        // Shared by live scans (RecordRawPoints) and save-file loads (LoadWorldPins) so both apply the
+        // exact same identity rules. The ZDOID-derived key is only a hint - ZDOIDs are re-assigned
+        // when a server reloads its world, so a key match only means "same object" if the position
+        // agrees too; otherwise the point is new and is stored under a disambiguated key instead of
+        // being silently skipped. See PersistedPointRules.
+        private static bool TryStoreRawPoint(TrackedItem item)
+        {
+            string key = RawPointKey(item.Zdoid);
+            bool keyTaken = rawPersistentPoints.TryGetValue(key, out TrackedItem atKey);
+
+            PersistedPointRules.KeyResolution resolution = PersistedPointRules.ResolveKey(keyTaken, keyTaken ? atKey.Position : default, item.Position);
+            if (resolution == PersistedPointRules.KeyResolution.AlreadyKnown) return false;
+            if (IsDuplicatePosition(item)) return false;
+
+            if (resolution == PersistedPointRules.KeyResolution.KeyCollision)
+            {
+                key = PersistedPointRules.DisambiguateKey(key, item.Position);
+                if (rawPersistentPoints.ContainsKey(key)) return false;
+            }
+
+            rawPersistentPoints[key] = item;
+            return true;
         }
 
         // Re-derives which categories should currently be visible and adds/removes minimap pins
@@ -213,7 +247,7 @@ namespace ValheimRadar
                 if (string.IsNullOrEmpty(key)) continue;
 
                 currentScanKeys.Add(key);
-                UpdateOrCreatePin(minimap, key, cluster.GetCentroid(), cluster.GetLabel(), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, key, cluster.GetCentroid(), LabelFor(cluster), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
             }
 
             List<string> toRemove = new List<string>();
@@ -266,7 +300,7 @@ namespace ValheimRadar
                     LogPinRemoved(cluster.LastSyncedKey, "recluster");
                 }
 
-                UpdateOrCreatePin(minimap, newKey, cluster.GetCentroid(), cluster.GetLabel(), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, newKey, cluster.GetCentroid(), LabelFor(cluster), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
                 cluster.LastSyncedKey = newKey;
                 syncedKeys?.Add(newKey);
             }
@@ -327,6 +361,8 @@ namespace ValheimRadar
                 rawLocationPoints[key] = loc;
                 locationPointsDirty = true;
 
+                if (dismissedPins.Contains(loc.CategoryKey, loc.Position)) continue;
+
                 UpdateOrCreatePin(minimap, key, loc.Position, loc.DisplayName, loc.DisplayName, loc.RawName, ResolveLocationIcon(loc), isPersistent: true, loc.CategoryKey);
             }
         }
@@ -341,6 +377,8 @@ namespace ValheimRadar
             foreach (var kvp in rawLocationPoints)
             {
                 TrackedLocation loc = kvp.Value;
+                if (dismissedPins.Contains(loc.CategoryKey, loc.Position)) continue;
+
                 UpdateOrCreatePin(minimap, kvp.Key, loc.Position, loc.DisplayName, loc.DisplayName, loc.RawName, ResolveLocationIcon(loc), isPersistent: true, loc.CategoryKey);
             }
         }
@@ -515,7 +553,7 @@ namespace ValheimRadar
                 if (existing.Pin != null)
                 {
                     existing.Pin.m_pos = pos;
-                    existing.Pin.m_name = name;
+                    ApplyPinName(existing.Pin, name);
                     existing.Pin.m_icon = icon;
 
                     // Only logged when something actually moved/renamed - UpdateOrCreatePin runs
@@ -575,6 +613,224 @@ namespace ValheimRadar
         // toggle, a ClusterDistance-triggered recluster, etc. - happening during the same test run.
         private static void LogPinRemoved(string clusterKey, string reason) =>
             Debug.Log($"[ValheimRadar] pin-removed key={clusterKey} reason={reason}");
+
+        // Pin label for a cluster: the plain "Nx Name" label, except creature pins whose icon already
+        // identifies them drop the name and keep only count/stars (config ShowCreatureNames, default off;
+        // decision logic lives in ItemCluster.ShouldHideCreatureName so it can be unit tested).
+        private static string LabelFor(ItemCluster cluster)
+        {
+            bool showNames = RadarConfig.ShowCreatureNames == null || RadarConfig.ShowCreatureNames.Value;
+            return cluster.GetLabel(ItemCluster.ShouldHideCreatureName(cluster.CategoryKey, cluster.Icon != null, showNames));
+        }
+
+        // Updates a live pin's label. Minimap only builds a pin's name text object when the pin is created
+        // with a non-empty name (Minimap.AddPin) and reads m_name once when that object is built, so just
+        // assigning m_name would leave an initially-empty label (creature pins that hide their name) blank
+        // forever and any later label change (e.g. cluster count 1 -> 2) stale. Mirrors what vanilla does
+        // when the player renames a pin (Minimap.OnPinTextEntered): give the pin a fresh PinNameData and let
+        // Minimap.UpdatePins lazily rebuild the text object from the new m_name.
+        private static void ApplyPinName(Minimap.PinData pin, string name)
+        {
+            if (name == null) name = string.Empty;
+            if (pin.m_name == name) return;
+
+            pin.m_name = name;
+            if (name.Length == 0) return; // Minimap.UpdatePins hides the name object whenever m_name is empty
+
+            if (pin.m_NamePinData != null && pin.m_NamePinData.PinNameGameObject != null)
+            {
+                UnityEngine.Object.Destroy(pin.m_NamePinData.PinNameGameObject);
+                pin.m_NamePinData = null;
+            }
+
+            if (pin.m_NamePinData == null)
+            {
+                pin.m_NamePinData = new Minimap.PinNameData(pin);
+            }
+        }
+
+        // Troubleshooting snapshot of the name objects Minimap builds for ValheimRadar's pins (see
+        // RadarPlugin's throttled call, RadarConfig.DiagnosticLogging). One summary line plus a few sample pins:
+        // it says whether name objects exist, are active, and sit under the expected name root, and whether the
+        // vanilla "names only when zoomed in" rule (m_showNamesZoom) is what's hiding them. Read-only.
+        public static void LogNameDiagnostics(Minimap minimap)
+        {
+            if (minimap == null) return;
+
+            try
+            {
+                int withPin = 0, withName = 0, withNameData = 0, withNameObject = 0, nameObjectActive = 0;
+                var samples = new List<string>();
+
+                foreach (var kvp in activeClusterPins)
+                {
+                    Minimap.PinData pin = kvp.Value.Pin;
+                    if (pin == null) continue;
+                    withPin++;
+
+                    bool hasName = !string.IsNullOrEmpty(pin.m_name);
+                    if (hasName) withName++;
+
+                    Minimap.PinNameData nameData = pin.m_NamePinData;
+                    if (nameData != null) withNameData++;
+
+                    GameObject nameObject = nameData != null ? nameData.PinNameGameObject : null;
+                    if (nameObject != null)
+                    {
+                        withNameObject++;
+                        if (nameObject.activeInHierarchy) nameObjectActive++;
+                    }
+
+                    if (hasName && samples.Count < 3)
+                    {
+                        string parent = nameObject != null && nameObject.transform.parent != null ? nameObject.transform.parent.name : "-";
+                        samples.Add($"'{pin.m_name}' cat={kvp.Value.CategoryKey} nameData={(nameData != null)} nameObj={(nameObject != null)} active={(nameObject != null && nameObject.activeInHierarchy)} parent={parent} iconShown={(pin.m_uiElement != null && pin.m_uiElement.gameObject.activeInHierarchy)}");
+                    }
+                }
+
+                RectTransform nameRoot = minimap.m_pinNameRootLarge;
+                string rootInfo = nameRoot != null
+                    ? $"{nameRoot.name} activeInHierarchy={nameRoot.gameObject.activeInHierarchy} children={nameRoot.childCount} scale={nameRoot.lossyScale.x:F2}"
+                    : "<null>";
+
+                Debug.Log($"[ValheimRadar] name-diag mode={minimap.m_mode} largeZoom={minimap.LargeZoom:F2} showNamesBelow={minimap.m_showNamesZoom:F2} radarPins={withPin} withName={withName} withNameData={withNameData} withNameObject={withNameObject} nameObjectActive={nameObjectActive} nameRoot=[{rootInfo}]");
+                foreach (string sample in samples) Debug.Log($"[ValheimRadar] name-diag sample {sample}");
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[ValheimRadar] name-diag failed: {ex.Message}");
+            }
+        }
+
+        // --- Manual pin removal (right-click) ---------------------------------------------------------
+        //
+        // Vanilla only lets the player remove pins with m_save == true (Minimap.GetClosestPin), and radar
+        // pins are created with save: false, so right-click never found them. MinimapPatches hooks the
+        // vanilla removal call and, when vanilla found nothing to remove, forwards to TryDismissPinAt.
+        //
+        // What can be dismissed: persistent (resource / Location) pins that are currently on the map. Every
+        // member point of a dismissed resource cluster is remembered by category + position (see
+        // DismissedPinStore) and excluded from all future clustering, so the pin stays gone across scan
+        // ticks, ClusterDistance rebuilds and relogs while every other pin - including other clusters of
+        // the same category - is untouched. Creature pins are excluded: they're rebuilt from live
+        // detections every tick, so there's no stable thing to remember.
+        public static bool TryDismissPinAt(Minimap minimap, Vector3 worldPos, float radius)
+        {
+            if (minimap == null) return false;
+            if (RadarConfig.EnablePinRemoval != null && !RadarConfig.EnablePinRemoval.Value) return false;
+
+            var keys = new List<string>();
+            var positions = new List<Vector3>();
+            foreach (var kvp in activeClusterPins)
+            {
+                PinEntry entry = kvp.Value;
+                bool shown = entry.Pin != null && entry.Pin.m_uiElement != null && entry.Pin.m_uiElement.gameObject.activeInHierarchy;
+                if (!PinDismissal.IsDismissible(entry.IsPersistent, shown)) continue;
+
+                keys.Add(kvp.Key);
+                positions.Add(entry.Position);
+            }
+
+            int index = PinDismissal.IndexOfClosest(positions, worldPos, radius);
+            if (index < 0) return false;
+
+            DismissPin(minimap, keys[index]);
+            return true;
+        }
+
+        private static void DismissPin(Minimap minimap, string pinKey)
+        {
+            if (!activeClusterPins.TryGetValue(pinKey, out PinEntry entry)) return;
+
+            if (pinKey.StartsWith("loc:", StringComparison.Ordinal) && rawLocationPoints.TryGetValue(pinKey, out TrackedLocation loc))
+            {
+                dismissedPins.Add(loc.CategoryKey, loc.Position);
+            }
+            else
+            {
+                ItemCluster cluster = persistentClusters.Find(c => c.LastSyncedKey == pinKey);
+                if (cluster != null)
+                {
+                    foreach (var item in cluster.Items) dismissedPins.Add(item.CategoryKey, item.Position);
+                    persistentClusters.Remove(cluster);
+                    dirtyPersistentClusters.Remove(cluster);
+                }
+                else
+                {
+                    // Shouldn't happen (every live persistent pin has a cluster), but never leave the
+                    // pin un-dismissable: at least remember its own position.
+                    dismissedPins.Add(entry.CategoryKey, entry.Position);
+                }
+            }
+
+            if (entry.Pin != null) minimap.RemovePin(entry.Pin);
+            activeClusterPins.Remove(pinKey);
+            LogPinRemoved(pinKey, "dismissed");
+
+            SaveDismissedPins();
+        }
+
+        // Restores every dismissed pin: forgets the dismissals and rebuilds what they had hidden. Persistent
+        // clusters are rebuilt (clusteredMaxDistance reset, so the next RecordRawPoints does a full
+        // RebuildPersistentClusters + resync) and dismissed Locations are redrawn right away.
+        public static void RestoreDismissedPins(Minimap minimap)
+        {
+            if (dismissedPins.Count == 0) return;
+
+            dismissedPins.Clear();
+            SaveDismissedPins();
+
+            clusteredMaxDistance = -1f;
+            DrawLoadedLocationPins(minimap);
+        }
+
+        // Loads this world's dismissed pins. Must run before RebuildPersistentClusters/DrawLoadedLocationPins
+        // on connect, since both consult the set. A missing file (every world before this feature, or one
+        // with nothing dismissed) simply means an empty set.
+        public static void LoadDismissedPins(string worldName)
+        {
+            dismissedPins.Clear();
+            dismissedPinsWorld = worldName;
+
+            if (string.IsNullOrEmpty(worldName)) return;
+
+            string path = GetSaveFilePath(worldName, ".dismissed.txt");
+            if (!File.Exists(path)) return;
+
+            try
+            {
+                dismissedPins.Load(File.ReadAllLines(path));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to load dismissed pins: {ex.Message}");
+            }
+        }
+
+        // Written immediately whenever the set changes (a right-click is rare and the file tiny), so
+        // nothing is lost to a crash and no separate flush is needed on disconnect.
+        private static void SaveDismissedPins()
+        {
+            if (string.IsNullOrEmpty(dismissedPinsWorld)) return;
+
+            string path = GetSaveFilePath(dismissedPinsWorld, ".dismissed.txt");
+
+            try
+            {
+                if (dismissedPins.Count == 0)
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                    return;
+                }
+
+                Directory.CreateDirectory(PinDataFolder);
+                File.WriteAllLines(path, dismissedPins.Serialize());
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to save dismissed pins: {ex.Message}");
+            }
+        }
 
         // Bumped whenever the on-disk pin save format changes shape in a way that needs explicit
         // migration/validation on load (see MigrateLegacyLine below), rather than just "new optional
@@ -658,14 +914,15 @@ namespace ValheimRadar
             // store dirty so the next save rewrites the file without it - self-healing the save file
             // over time instead of carrying the old duplicates forward forever.
             //
-            // Also covers points whose ZDO no longer exists at all (e.g. a boss arena's stone pillars,
-            // saved as persistent "AbandonedRuins"/"StoneRings" pins before BatchScanner's scan-volume
-            // fix and ObjectEvaluator's debris-name filter existed, then shattered and removed from the
-            // world on the boss's death). If ZDOMan hasn't fully synced yet this early after connecting
-            // (possible on a dedicated-server client, never on a hosted/singleplayer world, where
-            // ZDOMan is already fully authoritative at this point) a still-real distant point could be
-            // dropped by mistake - but nothing is lost: the next real scan near it just re-adds it, the
-            // same as any other not-yet-(re)scanned ground.
+            // Deliberately does NOT check whether each point's ZDO still exists in ZDOMan (an earlier
+            // version did, to shed e.g. a boss arena's shattered stone pillars). On a dedicated-server
+            // client ZDOMan only holds the sectors the server has streamed so far - essentially just the
+            // area around the player right after connecting - so that check discarded every persisted
+            // point further away on every reconnect, and since dropping marks the store dirty the save
+            // file was then rewritten without them, permanently losing the player's whole map (issue
+            // #42). ZDOIDs are also re-assigned whenever a server reloads its world, so the lookup
+            // couldn't prove anything even when ZDOMan was complete. Pins for objects that no longer
+            // exist are the lesser evil next to losing valid ones; see PersistedPointRules.
             bool droppedDuplicate = false;
             int migratedCount = 0;
             int unmigratableCount = 0;
@@ -714,12 +971,9 @@ namespace ValheimRadar
                         migratedCount++;
                     }
 
-                    ZDOID zdoid = new ZDOID(userId, id);
-                    string key = RawPointKey(zdoid);
-
                     TrackedItem candidate = new TrackedItem
                     {
-                        Zdoid = zdoid,
+                        Zdoid = new ZDOID(userId, id),
                         Position = new Vector3(x, y, z),
                         DisplayName = displayName,
                         RawName = rawName,
@@ -727,13 +981,7 @@ namespace ValheimRadar
                         CategoryKey = categoryKey
                     };
 
-                    if (rawPersistentPoints.ContainsKey(key) || IsDuplicatePosition(candidate))
-                    {
-                        droppedDuplicate = true;
-                        continue;
-                    }
-
-                    if (ZDOMan.instance == null || ZDOMan.instance.GetZDO(zdoid) == null)
+                    if (!TryStoreRawPoint(candidate))
                     {
                         droppedDuplicate = true;
                         continue;
@@ -744,8 +992,6 @@ namespace ValheimRadar
                     candidate.Icon = string.IsNullOrEmpty(iconPng)
                         ? null
                         : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
-
-                    rawPersistentPoints[key] = candidate;
                 }
 
                 rawPointsDirty = droppedDuplicate || migratedCount > 0 || unmigratableCount > 0;

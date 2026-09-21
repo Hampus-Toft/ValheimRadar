@@ -282,6 +282,43 @@ namespace ValheimRadar.Tests.Scanning
             Assert.NotNull(entry);
         }
 
+        [Theory]
+        [InlineData("boar", "boar")]
+        [InlineData("boar_piggy", "boar")]
+        [InlineData("wolf_cub", "wolf")]
+        [InlineData("lox_calf", "lox")]
+        public void FindCreatureOverride_BabyTamedAnimal_SharesAdultCanonicalKey(string prefabName, string expectedCanonicalKey)
+        {
+            // Baby prefabs (Boar_piggy -> "Piggy", Wolf_cub, Lox_Calf) must classify under the adult's
+            // key so they share its toggle, star filter and vanilla icon.
+            var entry = ObjectEvaluator.FindCreatureOverride(prefabName, out string matchedKey);
+
+            Assert.Equal(expectedCanonicalKey, matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Oozer_ResolvesViaRealBlobEliteAlias()
+        {
+            // The real prefab is "BlobElite" (loca "Oozer"); the old "blob_elite" alias was not a
+            // real prefab name, so Oozers never matched their definition (and never got an icon).
+            var entry = ObjectEvaluator.FindCreatureOverride("blobelite", out string matchedKey);
+
+            Assert.Equal("blob_elite", matchedKey);
+            Assert.NotNull(entry);
+        }
+
+        [Fact]
+        public void FindCreatureOverride_Writhan_ResolvesToOwnKeyDistinctFromWraith()
+        {
+            var writhan = ObjectEvaluator.FindCreatureOverride("writhan", out string writhanKey);
+            Assert.Equal("writhan", writhanKey);
+            Assert.NotNull(writhan);
+
+            ObjectEvaluator.FindCreatureOverride("wraith", out string wraithKey);
+            Assert.Equal("wraith", wraithKey);
+        }
+
         [Fact]
         public void FindCreatureOverride_Leviathan_ResolvesLikeAnyOtherAlias()
         {

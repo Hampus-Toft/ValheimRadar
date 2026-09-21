@@ -85,7 +85,11 @@ ValheimRadar/
 ├── Pinning/
 │   ├── IconLoader.cs            # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
 │   ├── VanillaIconResolver.cs   # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
-│   └── PinManager.cs            # Minimap pin sync, updates, removals, persistence, and icon resolution order
+│   ├── PinManager.cs            # Minimap pin sync, updates, removals, persistence, and icon resolution order
+│   ├── PersistedPointRules.cs   # Pure identity rules for saved raw points (ZDOID key is a hint, position confirms)
+│   ├── DismissedPins.cs         # Pure store + selection logic for pins the player dismissed via right-click
+│   ├── MinimapPatches.cs        # Harmony postfix on Minimap.RemovePin so radar pins can be right-click dismissed
+│   └── MinimapMarkerOrder.cs    # Raises the player/ship map markers above all pins (sibling order / canvas override)
 ├── Scanning/
 │   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
 │   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
