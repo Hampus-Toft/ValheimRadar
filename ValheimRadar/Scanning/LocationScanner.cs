@@ -134,6 +134,25 @@ namespace ValheimRadar
             return results;
         }
 
+        // ZoneLocation.Hash resolves m_prefab.Name, which throws KeyNotFoundException (empty AssetID) for
+        // catalog entries with no valid prefab reference. ZoneSystem.SetupLocations() itself only touches
+        // Hash for entries that are enabled or have a valid prefab, so such entries never get a hash in the
+        // game's own lookup and no LocationProxy can point at them - skip them. Left unguarded, the throw
+        // escaped every scan tick and the lookup was never built.
+        private static bool TryGetLocationHash(ZoneSystem.ZoneLocation loc, out int hash)
+        {
+            try
+            {
+                hash = loc.Hash;
+                return true;
+            }
+            catch (System.Exception)
+            {
+                hash = 0;
+                return false;
+            }
+        }
+
         private static Dictionary<int, LocationHashEntry> GetOrBuildHashLookup()
         {
             if (locationHashLookup != null) return locationHashLookup;
@@ -145,10 +164,12 @@ namespace ValheimRadar
                 string prefabLower = loc.m_prefabName?.ToLowerInvariant();
                 if (string.IsNullOrEmpty(prefabLower)) continue;
 
-                allNames[loc.Hash] = prefabLower;
+                if (!TryGetLocationHash(loc, out int hash)) continue;
+
+                allNames[hash] = prefabLower;
                 if (!RadarConfig.LocationPrefabLookup.TryGetValue(prefabLower, out var def)) continue;
 
-                lookup[loc.Hash] = new LocationHashEntry(def, prefabLower);
+                lookup[hash] = new LocationHashEntry(def, prefabLower);
             }
 
             locationPrefabByHash = allNames;
