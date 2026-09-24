@@ -12,7 +12,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.9.1";
+        public const string PluginVersion = "1.9.2";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.

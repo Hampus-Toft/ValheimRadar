@@ -90,7 +90,7 @@ namespace ValheimRadar
         {
             if (activeClusterPins.Count > 0)
             {
-                Debug.Log($"[ValheimRadar] pin-removed-all count={activeClusterPins.Count}");
+                RadarLog.Diag($"[ValheimRadar] pin-removed-all count={activeClusterPins.Count}");
             }
 
             if (Minimap.instance != null)
@@ -222,7 +222,7 @@ namespace ValheimRadar
                 {
                     entry.Pin = minimap.AddPin(entry.Position, Minimap.PinType.Icon3, entry.Label, save: false, isChecked: false);
                     entry.Pin.m_icon = entry.Icon;
-                    Debug.Log($"[ValheimRadar] pin-created key={kvp.Key} name={entry.DisplayName} pos={entry.Position.x:F1},{entry.Position.y:F1},{entry.Position.z:F1}");
+                    RadarLog.Diag($"[ValheimRadar] pin-created key={kvp.Key} name={entry.DisplayName} pos={entry.Position.x:F1},{entry.Position.y:F1},{entry.Position.z:F1}");
                 }
                 else if (!shouldShow && entry.Pin != null)
                 {
@@ -561,7 +561,7 @@ namespace ValheimRadar
                     // drown out the real events an integration test needs to assert on.
                     if (changed)
                     {
-                        Debug.Log($"[ValheimRadar] pin-updated key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                        RadarLog.Diag($"[ValheimRadar] pin-updated key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
                     }
                 }
 
@@ -571,7 +571,7 @@ namespace ValheimRadar
                 {
                     existing.Pin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: false);
                     existing.Pin.m_icon = icon;
-                    Debug.Log($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                    RadarLog.Diag($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
                 }
                 else if (!categoryEnabled && existing.Pin != null)
                 {
@@ -603,7 +603,7 @@ namespace ValheimRadar
 
                 if (newPin != null)
                 {
-                    Debug.Log($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                    RadarLog.Diag($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
                 }
             }
         }
@@ -612,7 +612,7 @@ namespace ValheimRadar
         // tell a real despawn (reason="out-of-range") apart from unrelated pin churn - a category
         // toggle, a ClusterDistance-triggered recluster, etc. - happening during the same test run.
         private static void LogPinRemoved(string clusterKey, string reason) =>
-            Debug.Log($"[ValheimRadar] pin-removed key={clusterKey} reason={reason}");
+            RadarLog.Diag($"[ValheimRadar] pin-removed key={clusterKey} reason={reason}");
 
         // Pin label for a cluster: the plain "Nx Name" label, except creature pins whose icon already
         // identifies them drop the name and keep only count/stars (config ShowCreatureNames, default off;
@@ -693,8 +693,8 @@ namespace ValheimRadar
                     ? $"{nameRoot.name} activeInHierarchy={nameRoot.gameObject.activeInHierarchy} children={nameRoot.childCount} scale={nameRoot.lossyScale.x:F2}"
                     : "<null>";
 
-                Debug.Log($"[ValheimRadar] name-diag mode={minimap.m_mode} largeZoom={minimap.LargeZoom:F2} showNamesBelow={minimap.m_showNamesZoom:F2} radarPins={withPin} withName={withName} withNameData={withNameData} withNameObject={withNameObject} nameObjectActive={nameObjectActive} nameRoot=[{rootInfo}]");
-                foreach (string sample in samples) Debug.Log($"[ValheimRadar] name-diag sample {sample}");
+                RadarLog.Diag($"[ValheimRadar] name-diag mode={minimap.m_mode} largeZoom={minimap.LargeZoom:F2} showNamesBelow={minimap.m_showNamesZoom:F2} radarPins={withPin} withName={withName} withNameData={withNameData} withNameObject={withNameObject} nameObjectActive={nameObjectActive} nameRoot=[{rootInfo}]");
+                foreach (string sample in samples) RadarLog.Diag($"[ValheimRadar] name-diag sample {sample}");
             }
             catch (Exception ex)
             {
@@ -998,7 +998,7 @@ namespace ValheimRadar
 
                 if (migratedCount > 0 || unmigratableCount > 0)
                 {
-                    Debug.Log($"[ValheimRadar] pin-save-migrated fromVersion={fileFormatVersion} migrated={migratedCount} dropped={unmigratableCount}");
+                    RadarLog.Diag($"[ValheimRadar] pin-save-migrated fromVersion={fileFormatVersion} migrated={migratedCount} dropped={unmigratableCount}");
                 }
             }
             catch (Exception ex)

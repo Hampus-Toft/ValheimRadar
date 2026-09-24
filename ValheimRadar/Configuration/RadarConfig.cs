@@ -520,8 +520,8 @@ namespace ValheimRadar
 
             EnablePinRemoval = Bind(config, "1 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
             ClearDismissedPins = Bind(config, "1 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
-            RaisePlayerMarker = Bind(config, "1 - General", "Raise Player Marker", true, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
-            DiagnosticLogging = Bind(config, "1 - General", "Diagnostic Logging", true, "Write a few throttled troubleshooting lines to the BepInEx log (pin name state while the large map is open, and Location prefabs the radar has no definition for). Safe to turn off once nothing needs debugging.");
+            RaisePlayerMarker = Bind(config, "1 - General", "Raise Player Marker", false, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
+            DiagnosticLogging = Bind(config, "1 - General", "Diagnostic Logging", false, "Write verbose troubleshooting lines (pin created/updated/removed, Location scan summaries, pin name state while the large map is open, unmapped Location prefabs) to the BepInEx log. Leave off unless troubleshooting.");
 
             Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
             Group_Berries = Bind(config, "2 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
