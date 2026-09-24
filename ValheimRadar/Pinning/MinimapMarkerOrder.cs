@@ -14,8 +14,8 @@ namespace ValheimRadar
     //  1. Preferred: move the marker's branch to be the last child of the common ancestor it shares with the
     //     pin roots, but only when that branch is a small widget (never a panel that also holds the map
     //     image, or the map would then draw over the pins).
-    //  2. Otherwise: give the marker its own override-sorting Canvas, which draws above the shared canvas
-    //     regardless of hierarchy order.
+    //  2. Otherwise leave vanilla ordering. (An earlier version added an override-sorting Canvas to the
+    //     marker; it can interfere with the map overlay UI, so there is deliberately no such fallback.)
     // Everything is null-guarded and wrapped in try/catch; a failure just leaves vanilla ordering.
     public static class MinimapMarkerOrder
     {
@@ -68,23 +68,17 @@ namespace ValheimRadar
 
             if (pending.Count == 0)
             {
-                Debug.Log($"[ValheimRadar] marker-order marker={PathOf(marker)} already above pins");
+                RadarLog.Diag($"[ValheimRadar] marker-order marker={PathOf(marker)} already above pins");
                 return;
             }
 
             if (TryReorderBranch(marker, pending))
             {
-                Debug.Log($"[ValheimRadar] marker-order marker={PathOf(marker)} raised by sibling order");
+                RadarLog.Diag($"[ValheimRadar] marker-order marker={PathOf(marker)} raised by sibling order");
                 return;
             }
 
-            if (TryOverrideSorting(marker))
-            {
-                Debug.Log($"[ValheimRadar] marker-order marker={PathOf(marker)} raised by canvas override");
-                return;
-            }
-
-            Debug.LogWarning($"[ValheimRadar] marker-order could not raise marker={PathOf(marker)} pins={PathOf(pending[0])}");
+            RadarLog.Diag($"[ValheimRadar] marker-order left vanilla ordering, could not raise marker={PathOf(marker)} pins={PathOf(pending[0])}");
         }
 
         private static bool TryReorderBranch(Transform marker, List<Transform> above)
@@ -110,17 +104,6 @@ namespace ValheimRadar
                 if (CompareDrawOrder(SiblingPath(marker), SiblingPath(reference)) <= 0) return false;
             }
 
-            return true;
-        }
-
-        private static bool TryOverrideSorting(Transform marker)
-        {
-            Canvas canvas = marker.GetComponent<Canvas>();
-            if (canvas == null) canvas = marker.gameObject.AddComponent<Canvas>();
-
-            Canvas parentCanvas = marker.parent != null ? marker.parent.GetComponentInParent<Canvas>() : null;
-            canvas.overrideSorting = true;
-            canvas.sortingOrder = (parentCanvas != null ? parentCanvas.sortingOrder : 0) + 1;
             return true;
         }
 

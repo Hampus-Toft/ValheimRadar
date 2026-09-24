@@ -85,7 +85,7 @@ namespace ValheimRadar
             if (RadarConfig.DiagnosticLogging != null && !RadarConfig.DiagnosticLogging.Value) return;
             if (string.IsNullOrEmpty(prefab) || !loggedUnmappedPrefabs.Add(prefab)) return;
 
-            Debug.Log($"[ValheimRadar] location-unmapped prefab={prefab}");
+            RadarLog.Diag($"[ValheimRadar] location-unmapped prefab={prefab}");
         }
 
         public static List<TrackedLocation> ScanLocations()
@@ -129,7 +129,7 @@ namespace ValheimRadar
                 });
             }
 
-            Debug.Log($"[ValheimRadar] location-scan matched={results.Count} totalKnown={allLocations.Count}");
+            RadarLog.Diag($"[ValheimRadar] location-scan matched={results.Count} totalKnown={allLocations.Count}");
 
             return results;
         }
@@ -207,7 +207,7 @@ namespace ValheimRadar
                 });
             }
 
-            Debug.Log($"[ValheimRadar] location-proxy-scan (client fallback) matched={results.Count}");
+            RadarLog.Diag($"[ValheimRadar] location-proxy-scan (client fallback) matched={results.Count}");
 
             return results;
         }
