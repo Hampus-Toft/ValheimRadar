@@ -50,5 +50,34 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Equal(index, ScanGeometry.GetCellIndex(center));
             Assert.Equal(index, ScanGeometry.GetCellIndex(center + half - 0.01f));
         }
+
+        [Theory]
+        [InlineData(0, 0, 2, true)]
+        [InlineData(2, -2, 2, true)]
+        [InlineData(3, 0, 2, false)]
+        [InlineData(0, -3, 2, false)]
+        [InlineData(1, 1, 1, true)]
+        [InlineData(2, 0, 1, false)]
+        public void IsWithinNearArea_IsASquareOfNearZones(int dx, int dz, int near, bool expected)
+        {
+            Assert.Equal(expected, ScanGeometry.IsWithinNearArea(dx, dz, near));
+        }
+
+        // A player in a valley below a mountain cell must still query that cell's slopes.
+        [Fact]
+        public void CombineVerticalRange_CoversBothPlayerAndCellGround()
+        {
+            ScanGeometry.CombineVerticalRange(playerY: 30f, groundY: 400f, out float minY, out float maxY);
+            Assert.Equal(30f - ScanGeometry.CellHeight, minY);
+            Assert.Equal(400f + ScanGeometry.CellHeight, maxY);
+        }
+
+        [Fact]
+        public void CombineVerticalRange_NoGroundHeight_CentersOnPlayer()
+        {
+            ScanGeometry.CombineVerticalRange(playerY: 30f, groundY: null, out float minY, out float maxY);
+            Assert.Equal(30f - ScanGeometry.CellHeight, minY);
+            Assert.Equal(30f + ScanGeometry.CellHeight, maxY);
+        }
     }
 }

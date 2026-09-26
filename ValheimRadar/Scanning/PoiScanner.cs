@@ -5,7 +5,7 @@ namespace ValheimRadar
 {
     // Type #3 (mostly-permanent) discovery entry point for POI content found via physics scan
     // (dungeon entrances, runestones, abandoned ruins, monster-spawner landmarks, the trader,
-    // natural loot chests). Shares ResourceScanner's "scan each cell once" model
+    // natural loot chests, Guck Sacks). Shares ResourceScanner's scan/rescan model
     // (PermanentSpatialScanner) - see PoiEvaluator for why this exists alongside the much cheaper,
     // ZoneSystem-based LocationScanner.
     public static class PoiScanner
@@ -16,8 +16,8 @@ namespace ValheimRadar
         // ordinary config changes deliberately don't reset this.
         public static void Reset() => scanner.Reset();
 
-        public static List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius) =>
-            scanner.ScanNewCells(playerPos, scanRadius);
+        internal static List<ScannedCell> Scan(Vector3 playerPos, float scanRadius, float now, float rescanInterval) =>
+            scanner.Scan(playerPos, scanRadius, now, rescanInterval);
 
         private static TrackedItem Classify(ZNetView netView, GameObject go, string nameLower)
         {

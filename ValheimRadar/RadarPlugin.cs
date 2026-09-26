@@ -12,7 +12,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.9.2";
+        public const string PluginVersion = "1.10.0";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
@@ -50,6 +50,9 @@ namespace ValheimRadar
                 Logger.LogError($"Failed to apply Minimap patches (right-click pin removal disabled): {ex}");
             }
 
+            // Guards each target itself - see DepletionPatches.Patch.
+            if (harmony != null) DepletionPatches.Apply(harmony);
+
             Logger.LogInfo($"{PluginName} initialized!");
         }
 
@@ -84,9 +87,9 @@ namespace ValheimRadar
 
             // Only the creature scanner's rotation cache is reset here (ScanRadius/ScanBatchCount
             // especially can invalidate it). ResourceScanner/PoiScanner deliberately do NOT reset on
-            // config changes - their "scan each cell once, ever" model (see
-            // PermanentSpatialScanner) means already-explored ground stays valid regardless of
-            // toggles, and resetting them here would force wastefully re-scanning it.
+            // config changes - already-explored ground stays valid regardless of toggles and is
+            // refreshed by budgeted rescans anyway (see PermanentSpatialScanner), so resetting them
+            // here would only force a wasteful burst of re-scanning it.
             CreatureScanner.Reset();
         }
 
@@ -187,24 +190,24 @@ namespace ValheimRadar
             PinManager.SyncTransientClusters(minimap, creatureClusters);
 
             // Type #2/#3 (semi-permanent) - resources and physics-detected points of interest don't
-            // move, so each scanner only ever physically queries map cells it has never scanned
-            // before (see ResourceScanner/PoiScanner/PermanentSpatialScanner) and returns just this
-            // tick's newly-discovered points, if any - every such cell currently in range is scanned
-            // this same tick (not trickled in over several), so ground the player only passes through
-            // briefly is never silently skipped. Those merge into the durable raw store and are
-            // clustered incrementally - only newly-discovered points touch existing clusters, so a
-            // session's full discovery history never gets reclustered from scratch on a normal tick
-            // (a ClusterDistance change is handled separately - see PinManager.RecordRawPoints). Pin
-            // updates are then pushed only for whatever clusters actually changed - on most ticks,
-            // once the local area is fully explored, that's nothing at all.
-            List<TrackedItem> newResources = ResourceScanner.ScanNewCells(playerPos, scanRadius);
-            List<TrackedItem> newPoi = PoiScanner.ScanNewCells(playerPos, scanRadius);
+            // move, so each scanner only queries cells that are new, newly loaded, or due for a
+            // budgeted rescan (see PermanentSpatialScanner) - usually none once the surroundings are
+            // explored. New points merge into the durable raw store and are clustered incrementally,
+            // so a session's full discovery history never gets reclustered from scratch on a normal
+            // tick (a ClusterDistance change is handled separately - see PinManager.RecordRawPoints);
+            // depletable points a verified rescan no longer finds are removed. Pin updates are then
+            // pushed only for whatever clusters actually changed.
+            float now = Time.time;
+            float rescanInterval = RadarConfig.ResourceRescanInterval.Value;
+            bool removeDepleted = RadarConfig.RemoveDepletedResources.Value;
+            List<ScannedCell> resourceCells = ResourceScanner.Scan(playerPos, scanRadius, now, rescanInterval);
+            List<ScannedCell> poiCells = PoiScanner.Scan(playerPos, scanRadius, now, rescanInterval);
 
-            // Called unconditionally, even with an empty list - RecordRawPoints also checks every
-            // call for a ClusterDistance config change and triggers a full recluster if so, which
-            // must keep happening on a fully-explored map (no new cells left to scan) too.
-            PinManager.RecordRawPoints(newResources, ClusterDistance);
-            PinManager.RecordRawPoints(newPoi, ClusterDistance);
+            // Called unconditionally, even with nothing scanned - RecordRawPoints (inside) also
+            // checks every call for a ClusterDistance config change and triggers a full recluster if
+            // so, which must keep happening on a fully-explored map too.
+            PinManager.RecordScannedCells(resourceCells, ClusterDistance, now, removeDepleted);
+            PinManager.RecordScannedCells(poiCells, ClusterDistance, now, removeDepleted);
             PinManager.SyncPersistentClusters(minimap);
         }
     }

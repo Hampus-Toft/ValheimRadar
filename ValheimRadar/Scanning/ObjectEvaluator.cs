@@ -1,3 +1,5 @@
+using UnityEngine;
+
 namespace ValheimRadar
 {
     // Thin composition root over the three type-specific evaluators (CreatureEvaluator,
@@ -43,6 +45,61 @@ namespace ValheimRadar
             }
 
             if (categoryKey.StartsWith("location:")) return LocationScanner.IsLocationCategoryEnabled(categoryKey);
+
+            return false;
+        }
+
+        // True for ore-deposit categories (see ResourceRule.OreDeposit): never clustered, and unlabeled
+        // when their icon identifies them.
+        public static bool IsOreDepositCategory(string categoryKey)
+        {
+            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return false;
+
+            return ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule) && rule.OreDeposit;
+        }
+
+        // The fixed display name a resource rule assigns from the prefab name alone, or null when the
+        // rule derives it from the live object instead. Lets saved points pick up renamed labels (e.g.
+        // "Silver Deposit" -> "Silver") so they still dedup against freshly scanned ones.
+        internal static string GetResourceDisplayNameOverride(string categoryKey, string rawName)
+        {
+            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return null;
+            if (!ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule)) return null;
+
+            return rule.DisplayNameOverride?.Invoke(rawName ?? string.Empty);
+        }
+
+        // True when a persisted category never grows back once taken (see ResourceRule.Depletable),
+        // i.e. its points may be removed once mined or found missing. Locations and creatures never are.
+        public static bool IsCategoryDepletable(string categoryKey)
+        {
+            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return false;
+
+            string id = categoryKey.Substring("resource:".Length);
+            if (ResourceEvaluator.TryGetRule(id, out var resourceRule)) return resourceRule.Depletable;
+            if (PoiEvaluator.TryGetRule(id, out var poiRule)) return poiRule.Depletable;
+            return false;
+        }
+
+        // Classifies a live object (e.g. one the player just hit) and returns its categoryKey only
+        // if that category is depletable. Resource rules first, then POI rules - the same split the
+        // two scanners use.
+        internal static bool TryGetDepletableCategory(GameObject go, string nameLower, out string categoryKey)
+        {
+            categoryKey = null;
+
+            if (ResourceEvaluator.TryMatchRule(go, nameLower, out var resourceRule))
+            {
+                if (!resourceRule.Depletable) return false;
+                categoryKey = $"resource:{resourceRule.Id}";
+                return true;
+            }
+
+            if (PoiEvaluator.TryMatchRule(go, nameLower, out var poiRule) && poiRule.Depletable)
+            {
+                categoryKey = $"resource:{poiRule.Id}";
+                return true;
+            }
 
             return false;
         }

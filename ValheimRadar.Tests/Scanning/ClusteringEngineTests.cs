@@ -111,5 +111,71 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Equal(2, clusters[0].Items.Count); // joined cluster A
             Assert.Single(clusters[1].Items);          // cluster B untouched
         }
+
+        private static TrackedItem Deposit(string categoryKey, string displayName, Vector3 position) => new TrackedItem
+        {
+            CategoryKey = categoryKey,
+            DisplayName = displayName,
+            Position = position
+        };
+
+        // Ore deposits are never grouped: each is its own pin, even right next to another.
+        [Fact]
+        public void ClusterItems_OreDepositsNearEachOther_EachGetOwnCluster()
+        {
+            var items = new List<TrackedItem>
+            {
+                Deposit("resource:SilverDeposit", "Silver", new Vector3(0, 0, 0)),
+                Deposit("resource:SilverDeposit", "Silver", new Vector3(1, 0, 0)),
+                Deposit("resource:SilverDeposit", "Silver", new Vector3(0, 0, 2))
+            };
+
+            var result = ClusteringEngine.ClusterItems(items, maxDistance: 15f);
+
+            Assert.Equal(3, result.Count);
+            Assert.All(result, c => Assert.True(c.Standalone));
+            Assert.All(result, c => Assert.Single(c.Items));
+        }
+
+        // The ClusterDistance grid key would put deposits a few meters apart on the same key (one pin).
+        [Fact]
+        public void ClusterItems_OreDepositsNearEachOther_HaveDistinctKeys()
+        {
+            var items = new List<TrackedItem>
+            {
+                Deposit("resource:CopperDeposit", "Copper", new Vector3(100, 0, 100)),
+                Deposit("resource:CopperDeposit", "Copper", new Vector3(101, 0, 100))
+            };
+
+            var result = ClusteringEngine.ClusterItems(items, maxDistance: 15f);
+
+            Assert.NotEqual(result[0].GetClusterKey(), result[1].GetClusterKey());
+        }
+
+        [Fact]
+        public void AddItem_NonDepositWithSameName_NeverJoinsADepositCluster()
+        {
+            var clusters = new List<ItemCluster>();
+            ClusteringEngine.AddItem(clusters, Deposit("resource:CopperDeposit", "Copper", Vector3.zero), 15f);
+            ClusteringEngine.AddItem(clusters, Item("Copper", new Vector3(1, 0, 0)), 15f);
+
+            Assert.Equal(2, clusters.Count);
+            Assert.Single(clusters[0].Items);
+        }
+
+        [Fact]
+        public void ClusterItems_NonDepositResources_StillCluster()
+        {
+            var items = new List<TrackedItem>
+            {
+                Deposit("resource:Flint", "Flint", new Vector3(0, 0, 0)),
+                Deposit("resource:Flint", "Flint", new Vector3(2, 0, 0))
+            };
+
+            var result = ClusteringEngine.ClusterItems(items, maxDistance: 15f);
+
+            Assert.Single(result);
+            Assert.False(result[0].Standalone);
+        }
     }
 }

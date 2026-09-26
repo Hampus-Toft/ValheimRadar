@@ -23,14 +23,23 @@ namespace ValheimRadar
 
         private static readonly Dictionary<string, PinEntry> activeClusterPins = new Dictionary<string, PinEntry>();
 
-        // Every persistent (resource/structure) point ever discovered, keyed by its ZDOID (a hint, not
-        // proof of identity - see PersistedPointRules/TryStoreRawPoint). Source of truth for persistentClusters below, which is what pins are actually
-        // synced from (see RecordRawPoints/SyncPersistentClusters). Points are recorded regardless of
-        // whether their category is currently enabled (see ObjectEvaluator) so re-enabling a category
-        // later immediately repopulates already-scanned ground instead of requiring the player to walk
-        // it again.
+        // Every persistent (resource/structure) point discovered and still believed to exist, keyed by
+        // its ZDOID (a hint, not proof of identity - see PersistedPointRules/TryStoreRawPoint). Source
+        // of truth for persistentClusters below, which is what pins are actually synced from (see
+        // RecordRawPoints/SyncPersistentClusters). Points are recorded regardless of whether their
+        // category is currently enabled (see ObjectEvaluator) so re-enabling a category later
+        // immediately repopulates already-scanned ground instead of requiring the player to walk it
+        // again. Depletable points leave the store once a rescan confirms they're gone (see
+        // RecordScannedCells). Only ever modified through AddRawPoint/RemoveRawPoint/ClearRawPoints
+        // so rawPointsByCell stays in step.
         private static readonly Dictionary<string, TrackedItem> rawPersistentPoints = new Dictionary<string, TrackedItem>();
         private static bool rawPointsDirty;
+
+        // The same points bucketed by scan cell (ScanGeometry's 64 m zone grid), so duplicate checks
+        // and rescan reconciliation only look at the few points near a position instead of the whole
+        // world's history - rescans re-report every object in a cell, so this runs far more often
+        // than when each cell was only ever scanned once.
+        private static readonly Dictionary<ScanCellKey, Dictionary<string, TrackedItem>> rawPointsByCell = new Dictionary<ScanCellKey, Dictionary<string, TrackedItem>>();
 
         // Every world Location ever discovered this session via LocationScanner, keyed by
         // "loc:" + TrackedLocation.LocationKey. A completely separate store from
@@ -102,7 +111,7 @@ namespace ValheimRadar
             }
 
             activeClusterPins.Clear();
-            rawPersistentPoints.Clear();
+            ClearRawPoints();
             rawPointsDirty = false;
             persistentClusters.Clear();
             dirtyPersistentClusters.Clear();
@@ -165,11 +174,183 @@ namespace ValheimRadar
             persistentFullResyncPending = true;
         }
 
+        // Records one PermanentSpatialScanner pass: every item found goes through RecordRawPoints
+        // (already-known points dedup there), then - when removeDepleted is on - every depletable
+        // recorded point inside a verified cell that this pass did NOT find gets a miss, and is
+        // removed for good once DepletionRules says the misses are conclusive. That's how resources
+        // mined out by other players, or picked up by this one, disappear from the map.
+        internal static void RecordScannedCells(List<ScannedCell> cells, float maxDistance, float now, bool removeDepleted)
+        {
+            List<TrackedItem> found = new List<TrackedItem>();
+            foreach (var cell in cells) found.AddRange(cell.Items);
+
+            // Called even with nothing found - RecordRawPoints also picks up ClusterDistance changes.
+            RecordRawPoints(found, maxDistance);
+
+            if (removeDepleted) RemoveMissingDepletedPoints(cells, now);
+        }
+
+        private static void RemoveMissingDepletedPoints(List<ScannedCell> cells, float now)
+        {
+            List<string> gone = null;
+
+            foreach (var cell in cells)
+            {
+                if (!cell.Verified) continue;
+                if (!rawPointsByCell.TryGetValue(cell.Key, out var bucket)) continue;
+
+                foreach (var kvp in bucket)
+                {
+                    TrackedItem point = kvp.Value;
+                    if (!ObjectEvaluator.IsCategoryDepletable(point.CategoryKey)) continue;
+                    if (!DepletionRules.IsWithinVerifiedHeight(point.Position.y, cell.MinY, cell.MaxY)) continue;
+
+                    DepletionRules.RecordObservation(point, DepletionRules.IsPresent(point.CategoryKey, point.Position, cell.Items), now);
+                    if (DepletionRules.ShouldRemove(point, now)) (gone ?? (gone = new List<string>())).Add(kvp.Key);
+                }
+            }
+
+            if (gone == null) return;
+
+            bool dismissalsChanged = false;
+            foreach (string key in gone)
+            {
+                TrackedItem point = rawPersistentPoints[key];
+                RemoveRawPoint(key);
+                DetachFromCluster(point, "depleted");
+
+                // A dismissal (manual, or from mining it - see MarkDepletedAt) has nothing left to hide.
+                dismissalsChanged |= dismissedPins.Remove(point.CategoryKey, point.Position);
+
+                RadarLog.Diag($"[ValheimRadar] point-depleted key={key} name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
+            }
+
+            rawPointsDirty = true;
+            if (dismissalsChanged) SaveDismissedPins();
+        }
+
+        // The local player just mined/picked a depletable object at position (see DepletionPatches) -
+        // hide the recorded point for it straight away rather than waiting for rescans to confirm it's
+        // gone. categoryKey is the object's own category, or null when the hit object was the "_frac"
+        // debris a deposit turns into (then any depletable category matches). Recorded as a
+        // dismissal, not a deletion: a MineRock such as an obsidian deposit keeps existing after the
+        // first hit, and a rescan re-finding it must not bring the pin back. The raw point itself is
+        // kept until a rescan confirms the object is gone, which then also drops the dismissal.
+        internal static void MarkDepletedAt(string categoryKey, Vector3 position)
+        {
+            var candidates = new List<TrackedItem>();
+            var positions = new List<Vector3>();
+            foreach (TrackedItem point in RawPointsNear(position, DepletionRules.HitMatchRadius))
+            {
+                if (categoryKey != null ? point.CategoryKey != categoryKey : !ObjectEvaluator.IsCategoryDepletable(point.CategoryKey)) continue;
+                if (dismissedPins.Contains(point.CategoryKey, point.Position)) continue;
+
+                candidates.Add(point);
+                positions.Add(point.Position);
+            }
+
+            int index = PinDismissal.IndexOfClosest(positions, position, DepletionRules.HitMatchRadius);
+            if (index < 0) return;
+
+            TrackedItem mined = candidates[index];
+            dismissedPins.Add(mined.CategoryKey, mined.Position);
+            DetachFromCluster(mined, "mined");
+            SaveDismissedPins();
+
+            RadarLog.Diag($"[ValheimRadar] point-mined name={mined.DisplayName} pos={mined.Position.x:F1},{mined.Position.y:F1},{mined.Position.z:F1}");
+        }
+
+        // Takes one point out of whichever persistent cluster holds it. An emptied cluster loses its
+        // pin right away (SyncPersistentClusters skips key-less clusters, so it can't); a shrunk one
+        // is marked dirty so the next sync moves/relabels its pin.
+        private static void DetachFromCluster(TrackedItem point, string reason)
+        {
+            for (int i = 0; i < persistentClusters.Count; i++)
+            {
+                ItemCluster cluster = persistentClusters[i];
+                if (!cluster.Items.Remove(point)) continue;
+
+                if (cluster.Items.Count == 0)
+                {
+                    persistentClusters.RemoveAt(i);
+                    dirtyPersistentClusters.Remove(cluster);
+
+                    if (cluster.LastSyncedKey != null && activeClusterPins.TryGetValue(cluster.LastSyncedKey, out PinEntry entry))
+                    {
+                        if (entry.Pin != null && Minimap.instance != null) Minimap.instance.RemovePin(entry.Pin);
+                        activeClusterPins.Remove(cluster.LastSyncedKey);
+                        LogPinRemoved(cluster.LastSyncedKey, reason);
+                    }
+                }
+                else if (!dirtyPersistentClusters.Contains(cluster))
+                {
+                    dirtyPersistentClusters.Add(cluster);
+                }
+
+                return;
+            }
+        }
+
         private static string RawPointKey(ZDOID zdoid) => $"{zdoid.UserID}:{zdoid.ID}";
+
+        private static ScanCellKey CellOf(Vector3 position) =>
+            new ScanCellKey(ScanGeometry.GetCellIndex(position.x), ScanGeometry.GetCellIndex(position.z));
+
+        private static void AddRawPoint(string key, TrackedItem item)
+        {
+            rawPersistentPoints[key] = item;
+
+            ScanCellKey cell = CellOf(item.Position);
+            if (!rawPointsByCell.TryGetValue(cell, out var bucket))
+            {
+                bucket = new Dictionary<string, TrackedItem>();
+                rawPointsByCell[cell] = bucket;
+            }
+
+            bucket[key] = item;
+        }
+
+        private static void RemoveRawPoint(string key)
+        {
+            if (!rawPersistentPoints.TryGetValue(key, out TrackedItem item)) return;
+            rawPersistentPoints.Remove(key);
+
+            ScanCellKey cell = CellOf(item.Position);
+            if (rawPointsByCell.TryGetValue(cell, out var bucket))
+            {
+                bucket.Remove(key);
+                if (bucket.Count == 0) rawPointsByCell.Remove(cell);
+            }
+        }
+
+        private static void ClearRawPoints()
+        {
+            rawPersistentPoints.Clear();
+            rawPointsByCell.Clear();
+        }
+
+        // Recorded points in every cell touched by the square of +-radius around position (callers
+        // apply their own exact distance test).
+        private static IEnumerable<TrackedItem> RawPointsNear(Vector3 position, float radius)
+        {
+            int minX = ScanGeometry.GetCellIndex(position.x - radius);
+            int maxX = ScanGeometry.GetCellIndex(position.x + radius);
+            int minZ = ScanGeometry.GetCellIndex(position.z - radius);
+            int maxZ = ScanGeometry.GetCellIndex(position.z + radius);
+
+            for (int x = minX; x <= maxX; x++)
+            {
+                for (int z = minZ; z <= maxZ; z++)
+                {
+                    if (!rawPointsByCell.TryGetValue(new ScanCellKey(x, z), out var bucket)) continue;
+                    foreach (TrackedItem point in bucket.Values) yield return point;
+                }
+            }
+        }
 
         private static bool IsDuplicatePosition(TrackedItem item)
         {
-            foreach (var existing in rawPersistentPoints.Values)
+            foreach (var existing in RawPointsNear(item.Position, PersistedPointRules.DuplicatePointRadius))
             {
                 if (PersistedPointRules.IsDuplicate(existing.DisplayName, existing.Position, item.DisplayName, item.Position))
                 {
@@ -201,7 +382,7 @@ namespace ValheimRadar
                 if (rawPersistentPoints.ContainsKey(key)) return false;
             }
 
-            rawPersistentPoints[key] = item;
+            AddRawPoint(key, item);
             return true;
         }
 
@@ -530,6 +711,19 @@ namespace ValheimRadar
             return ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
         }
 
+        // True when icon tells this type apart from the rest of its category: Valheim's own item icon
+        // or a user PNG for this exact prefab (ResolvePerObjectPin tiers 1/3) - but not the shared
+        // category PNG (e.g. ore.png for every ore), which alone can't tell silver from copper.
+        private static bool IconIdentifiesType(Sprite icon, string categoryKey)
+        {
+            if (icon == null) return false;
+
+            string categoryPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
+            if (string.IsNullOrEmpty(categoryPng)) return true;
+
+            return icon != IconLoader.LoadPng(Path.Combine(ConfigIconFolder, categoryPng));
+        }
+
         private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string displayName, string rawName, Sprite icon, bool isPersistent, string categoryKey)
         {
             bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
@@ -537,6 +731,13 @@ namespace ValheimRadar
             if (icon == null)
             {
                 icon = TryResolveMissingIcon(categoryKey, rawName);
+            }
+
+            // An ore deposit whose icon already shows which ore it is needs no label; without such
+            // an icon it keeps its plain ore name ("Silver").
+            if (ObjectEvaluator.IsOreDepositCategory(categoryKey) && IconIdentifiesType(icon, categoryKey))
+            {
+                name = string.Empty;
             }
 
             if (activeClusterPins.TryGetValue(clusterKey, out PinEntry existing))
@@ -561,7 +762,7 @@ namespace ValheimRadar
                     // drown out the real events an integration test needs to assert on.
                     if (changed)
                     {
-                        RadarLog.Diag($"[ValheimRadar] pin-updated key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
+                        // RadarLog.Diag($"[ValheimRadar] pin-updated key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
                     }
                 }
 
@@ -840,7 +1041,9 @@ namespace ValheimRadar
         // Bumped to 3 for the Chests -> Chests/BuriedChests split (see
         // MigrateLegacyCategoryKey's "Chests" case) so saves written by older builds get re-migrated
         // even though their categoryKey ("resource:Chests") is still a currently-valid id on its own.
-        private const int SaveFormatVersion = 3;
+        // Bumped to 4 when loose item drops (raw ore, ingots, dropped iron scrap) stopped being
+        // tracked, so their saved points get dropped (see MigrateLegacyCategoryKey).
+        private const int SaveFormatVersion = 4;
         private const int PreVersioningFormat = 0;
 
         // Only stationary resource/structure points are written to disk - creature positions are
@@ -891,15 +1094,15 @@ namespace ValheimRadar
         // Handles migrating a save file written before this whitelist rewrite (categoryKey values
         // like "resource:Copper"/"resource:Portals" that no longer exist as ResourceRule ids - see
         // ObjectEvaluator's ResourceRules, whose ids were split/renamed/removed in that change).
-        // MigrateLegacyLine re-maps every old categoryKey it can (e.g. a pre-split "resource:Copper"
-        // point becomes "resource:CopperIngot", since that's what a raw prefab literally named
-        // "Copper" - the ingot - would classify as today) and drops (with a one-line log summary, not
-        // per-point spam) anything it can't - most notably every "resource:Portals" point, since
-        // player-built portals are no longer tracked at all. A file already on the current format is
-        // passed through unchanged.
+        // MigrateLegacyCategoryKey re-maps every old categoryKey it can (e.g. a pre-split
+        // "resource:Copper" point whose raw name is "rock4_copper" becomes "resource:CopperDeposit")
+        // and drops (with a one-line log summary, not per-point spam) anything it can't - most
+        // notably every "resource:Portals" point and every loose item drop (raw ore, ingots), which
+        // are no longer tracked at all. A file already on the current format is passed through
+        // unchanged.
         public static void LoadWorldPins(string worldName)
         {
-            rawPersistentPoints.Clear();
+            ClearRawPoints();
             rawPointsDirty = false;
 
             if (string.IsNullOrEmpty(worldName)) return;
@@ -924,6 +1127,7 @@ namespace ValheimRadar
             // couldn't prove anything even when ZDOMan was complete. Pins for objects that no longer
             // exist are the lesser evil next to losing valid ones; see PersistedPointRules.
             bool droppedDuplicate = false;
+            bool renamed = false;
             int migratedCount = 0;
             int unmigratableCount = 0;
 
@@ -971,6 +1175,15 @@ namespace ValheimRadar
                         migratedCount++;
                     }
 
+                    // Labels fixed by a rule (e.g. ore deposits, renamed "Silver Deposit" -> "Silver")
+                    // are re-derived, so saved points keep deduping against rescanned ones by name.
+                    string currentName = ObjectEvaluator.GetResourceDisplayNameOverride(categoryKey, rawName);
+                    if (!string.IsNullOrEmpty(currentName) && currentName != displayName)
+                    {
+                        displayName = currentName;
+                        renamed = true;
+                    }
+
                     TrackedItem candidate = new TrackedItem
                     {
                         Zdoid = new ZDOID(userId, id),
@@ -994,7 +1207,7 @@ namespace ValheimRadar
                         : ResolvePerObjectPin(rawName, iconPng, vanillaIcon);
                 }
 
-                rawPointsDirty = droppedDuplicate || migratedCount > 0 || unmigratableCount > 0;
+                rawPointsDirty = droppedDuplicate || renamed || migratedCount > 0 || unmigratableCount > 0;
 
                 if (migratedCount > 0 || unmigratableCount > 0)
                 {
@@ -1032,27 +1245,36 @@ namespace ValheimRadar
 
             switch (oldId)
             {
-                // Each old single-bucket ore id fanned out into Deposit/Ore/Ingot - use the saved raw
-                // prefab name (still exact from before this rewrite) to pick the right one.
+                // Each old single-bucket ore id covered both the world node and loose items (raw ore,
+                // ingots). Only the node survives - use the saved raw prefab name (still exact) to
+                // tell them apart, and drop everything else.
                 case "Copper":
-                    if (cleanRaw == "copperore") { newCategoryKey = "resource:CopperOre"; return true; }
                     if (cleanRaw == "minerock_copper" || cleanRaw == "rock4_copper" || cleanRaw == "rock4_copper_frac") { newCategoryKey = "resource:CopperDeposit"; return true; }
-                    newCategoryKey = "resource:CopperIngot"; // default: old rule's own VanillaIcon was "copperore", but "Copper" (the ingot) was the most common real match
-                    return true;
+                    return false;
                 case "Tin":
-                    if (cleanRaw == "tinore") { newCategoryKey = "resource:TinOre"; return true; }
                     if (cleanRaw == "minerock_tin") { newCategoryKey = "resource:TinDeposit"; return true; }
-                    newCategoryKey = "resource:TinIngot";
-                    return true;
+                    return false;
                 case "Iron":
-                    if (cleanRaw == "ironscrap" || cleanRaw == "mudpile" || cleanRaw == "mudpile2") { newCategoryKey = "resource:IronScrap"; return true; }
-                    newCategoryKey = "resource:IronIngot";
-                    return true;
+                    if (cleanRaw == "mudpile" || cleanRaw == "mudpile2") { newCategoryKey = "resource:IronScrap"; return true; }
+                    return false;
                 case "Silver":
-                    if (cleanRaw == "silverore") { newCategoryKey = "resource:SilverOre"; return true; }
                     if (cleanRaw == "silvervein" || cleanRaw == "silvervein_frac" || cleanRaw == "rock3_silver" || cleanRaw == "rock3_silver_frac") { newCategoryKey = "resource:SilverDeposit"; return true; }
-                    newCategoryKey = "resource:SilverIngot";
-                    return true;
+                    return false;
+
+                // Loose item drops (raw ore, ingots) are no longer tracked at all - only resource
+                // nodes are (save format 4).
+                case "CopperOre":
+                case "CopperIngot":
+                case "TinOre":
+                case "TinIngot":
+                case "IronIngot":
+                case "SilverOre":
+                case "SilverIngot":
+                    return false;
+
+                // Same id as the swamp scrap-pile node, but a dropped "IronScrap" item landed here too.
+                case "IronScrap":
+                    return cleanRaw != "ironscrap";
 
                 // Chests split into above-ground (Chests) vs buried (BuriedChests) - re-derive from
                 // the saved raw prefab name, which is still exact.

@@ -20,14 +20,24 @@ namespace ValheimRadar
         // far apart in the insertion order never get merged after the fact even if they end up close),
         // but that's the exact behavior ClusterItems already had - preserving it here means incremental
         // and from-scratch clustering agree as long as items are processed in the same order.
+        //
+        // Ore deposits (ObjectEvaluator.IsOreDepositCategory) never join or accept others: each one
+        // always becomes its own Standalone single-item cluster, i.e. its own pin.
         public static ItemCluster AddItem(List<ItemCluster> clusters, TrackedItem item, float maxDistance)
         {
-            foreach (var cluster in clusters)
+            bool standalone = ObjectEvaluator.IsOreDepositCategory(item.CategoryKey);
+
+            if (!standalone)
             {
-                if (cluster.DisplayName == item.DisplayName && Vector3.Distance(cluster.GetCentroid(), item.Position) <= maxDistance)
+                foreach (var cluster in clusters)
                 {
-                    cluster.Items.Add(item);
-                    return cluster;
+                    if (cluster.Standalone) continue;
+
+                    if (cluster.DisplayName == item.DisplayName && Vector3.Distance(cluster.GetCentroid(), item.Position) <= maxDistance)
+                    {
+                        cluster.Items.Add(item);
+                        return cluster;
+                    }
                 }
             }
 
@@ -38,7 +48,8 @@ namespace ValheimRadar
                 IsPersistent = item.IsPersistent,
                 CategoryKey = item.CategoryKey,
                 RawName = item.RawName,
-                MaxDistance = maxDistance
+                MaxDistance = maxDistance,
+                Standalone = standalone
             };
             newCluster.Items.Add(item);
             clusters.Add(newCluster);

@@ -123,6 +123,33 @@ namespace ValheimRadar.Tests.Pinning
 
             Assert.Equal(0, store.Count);
         }
+
+        [Fact]
+        public void Remove_OnlyForgetsThatCategoryAtThatSpot()
+        {
+            var store = new DismissedPinStore();
+            store.Add("resource:CopperDeposit", new Vector3(10, 5, 20));
+            store.Add("resource:CopperDeposit", new Vector3(50, 5, 20));
+            store.Add("resource:Flint", new Vector3(10, 5, 20));
+
+            Assert.True(store.Remove("resource:CopperDeposit", new Vector3(10.1f, 5, 20)));
+
+            Assert.Equal(2, store.Count);
+            Assert.False(store.Contains("resource:CopperDeposit", new Vector3(10, 5, 20)));
+            Assert.True(store.Contains("resource:CopperDeposit", new Vector3(50, 5, 20)));
+            Assert.True(store.Contains("resource:Flint", new Vector3(10, 5, 20)));
+        }
+
+        [Fact]
+        public void Remove_NothingThere_ReturnsFalse()
+        {
+            var store = new DismissedPinStore();
+            store.Add("resource:CopperDeposit", new Vector3(10, 5, 20));
+
+            Assert.False(store.Remove("resource:CopperDeposit", new Vector3(30, 5, 20)));
+            Assert.False(store.Remove("resource:TinDeposit", new Vector3(10, 5, 20)));
+            Assert.Equal(1, store.Count);
+        }
     }
 
     public class PinDismissalTests

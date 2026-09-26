@@ -4,12 +4,10 @@ using UnityEngine;
 namespace ValheimRadar
 {
     // Type #2 (semi-permanent) discovery entry point - trees/ores/ground pickables, berries,
-    // mushrooms, flowers & crops, wild beehives. Wraps a PermanentSpatialScanner: once a map cell
-    // has been physically queried it is never queried again this session, since a resource found
-    // there is already recorded forever in PinManager's raw point store regardless of whether the
-    // cell itself gets re-scanned. Returns only newly-discovered points each tick - RadarPlugin
-    // folds them into the existing persistent cluster set incrementally rather than reclustering
-    // everything (see RadarPlugin.ScanAndPinObjects / PinManager.SyncPersistentClusters).
+    // mushrooms, flowers & crops, wild beehives. Wraps a PermanentSpatialScanner: new ground is
+    // scanned as soon as it's in range, and already-scanned ground in the loaded area is re-scanned
+    // periodically so late-loading resources still get found and depleted ones get removed (see
+    // PermanentSpatialScanner and PinManager.RecordScannedCells).
     public static class ResourceScanner
     {
         private static readonly PermanentSpatialScanner scanner = new PermanentSpatialScanner(Classify);
@@ -18,8 +16,8 @@ namespace ValheimRadar
         // ordinary config changes deliberately don't reset this.
         public static void Reset() => scanner.Reset();
 
-        public static List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius) =>
-            scanner.ScanNewCells(playerPos, scanRadius);
+        internal static List<ScannedCell> Scan(Vector3 playerPos, float scanRadius, float now, float rescanInterval) =>
+            scanner.Scan(playerPos, scanRadius, now, rescanInterval);
 
         private static TrackedItem Classify(ZNetView netView, GameObject go, string nameLower)
         {
