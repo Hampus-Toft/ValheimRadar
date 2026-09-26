@@ -31,7 +31,11 @@ namespace ValheimRadar
             public readonly string VanillaIcon;
             public readonly Func<string, string> DisplayNameOverride;
 
-            public PoiRule(string id, Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng, string vanillaIcon = null, Func<string, string> displayNameOverride = null)
+            // Same meaning as ResourceEvaluator.ResourceRule.Depletable - only the Guck Sack, which
+            // is destroyed when harvested and never grows back.
+            public readonly bool Depletable;
+
+            public PoiRule(string id, Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng, string vanillaIcon = null, Func<string, string> displayNameOverride = null, bool depletable = false)
             {
                 Id = id;
                 Enabled = enabled;
@@ -39,6 +43,7 @@ namespace ValheimRadar
                 IconPng = iconPng;
                 VanillaIcon = vanillaIcon;
                 DisplayNameOverride = displayNameOverride;
+                Depletable = depletable;
             }
         }
 
@@ -131,7 +136,7 @@ namespace ValheimRadar
             // & Landmarks, since players look for it alongside the other Swamp/ore resources; still
             // physics-scan detected here rather than a ResourceEvaluator ResourceRule since it has no
             // MineRock component.
-            new PoiRule("Guck", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", "guck", Const("Guck Sack")),
+            new PoiRule("Guck", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackGuck.Value, (go, n) => IsExactAlias(n, "gucksack", "gucksack_small"), "ruin.png", "guck", Const("Guck Sack"), depletable: true),
         };
 
         internal static bool TryClassify(GameObject go, string nameLower, out string displayName, out Sprite icon, out string categoryKey)
@@ -150,6 +155,20 @@ namespace ValheimRadar
                 return true;
             }
 
+            return false;
+        }
+
+        // First rule matching the object (same order TryClassify uses), whatever its toggle state.
+        internal static bool TryMatchRule(GameObject go, string nameLower, out PoiRule rule)
+        {
+            foreach (var r in Rules)
+            {
+                if (!r.Matches(go, nameLower)) continue;
+                rule = r;
+                return true;
+            }
+
+            rule = null;
             return false;
         }
 

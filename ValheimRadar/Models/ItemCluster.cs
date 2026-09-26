@@ -13,6 +13,10 @@ namespace ValheimRadar
         public float MaxDistance = 1f;
         public List<TrackedItem> Items = new List<TrackedItem>();
 
+        // Set by ClusteringEngine for categories that are never grouped (ore deposits): the cluster
+        // only ever holds its one item, and GetClusterKey keys it by that item's exact position.
+        public bool Standalone;
+
         // Cluster key as of the last time this cluster's pin was pushed to the minimap. Only used for
         // incrementally-maintained persistent clusters (see PinManager.SyncPersistentClusters), which -
         // unlike transient clusters - persist as the same live object across ticks: adding an item can
@@ -105,9 +109,19 @@ namespace ValheimRadar
         // changes every time that composition shifts, and PinManager (correctly) treats a changed
         // key as a brand-new cluster, permanently stacking duplicate persistent pins ("Dandelion",
         // "2x Dandelion", "3x Dandelion", ...) for what is really a single spot.
+        //
+        // A Standalone cluster is one object that never moves, so its own position (to 0.1 m) is a
+        // stable key - and, unlike the ClusterDistance grid, keeps two deposits a few meters apart
+        // from sharing a key (and so a single pin).
         public string GetClusterKey()
         {
             if (Items.Count == 0) return string.Empty;
+
+            if (Standalone)
+            {
+                Vector3 p = Items[0].Position;
+                return $"{DisplayName}@{Mathf.RoundToInt(p.x * 10f)}_{Mathf.RoundToInt(p.z * 10f)}";
+            }
 
             Vector3 centroid = GetCentroid();
             float gridSize = MaxDistance > 0f ? MaxDistance : 1f;

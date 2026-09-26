@@ -57,6 +57,23 @@ namespace ValheimRadar
             return false;
         }
 
+        // Forgets every entry of this category within MatchRadius of position; returns whether any was
+        // removed. Used once the dismissed object itself is confirmed gone, so the store doesn't keep
+        // growing with entries for mined-out resources.
+        public bool Remove(string categoryKey, Vector3 position)
+        {
+            if (Count == 0) return false;
+            if (categoryKey == null) categoryKey = string.Empty;
+            if (!byCategory.TryGetValue(categoryKey, out List<Vector3> list)) return false;
+
+            int removed = list.RemoveAll(dismissed => DistanceXZ(dismissed, position) <= MatchRadius);
+            if (removed == 0) return false;
+
+            Count -= removed;
+            if (list.Count == 0) byCategory.Remove(categoryKey);
+            return true;
+        }
+
         public void Clear()
         {
             byCategory.Clear();

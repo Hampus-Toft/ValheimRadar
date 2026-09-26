@@ -120,19 +120,21 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Null(ObjectEvaluator.GetVanillaIconForCategory("resource:Dungeons"));
         }
 
-        [Fact]
-        public void CopperOreAndIngot_AreDistinctRulesWithDistinctVerifiedIcons()
+        // Only resource nodes are tracked - loose raw ore / ingot categories no longer exist, and
+        // neither does the old conflated per-metal id.
+        [Theory]
+        [InlineData("resource:Copper")]
+        [InlineData("resource:CopperOre")]
+        [InlineData("resource:CopperIngot")]
+        [InlineData("resource:TinOre")]
+        [InlineData("resource:TinIngot")]
+        [InlineData("resource:IronIngot")]
+        [InlineData("resource:SilverOre")]
+        [InlineData("resource:SilverIngot")]
+        public void LooseItemCategories_DoNotExist(string categoryKey)
         {
-            // The bug this whitelist rewrite exists to fix: ore and ingot used to be one
-            // conflated "resource:Copper" rule/pin. They are now two distinct rule ids with
-            // distinct verified vanilla icons.
-            Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:CopperOre"));
-            Assert.Equal("ore.png", ObjectEvaluator.GetDefaultIconForCategory("resource:CopperIngot"));
-            Assert.Equal("copperore", ObjectEvaluator.GetVanillaIconForCategory("resource:CopperOre"));
-            Assert.Equal("bar_copper_stack", ObjectEvaluator.GetVanillaIconForCategory("resource:CopperIngot"));
-
-            // The old conflated id no longer exists.
-            Assert.Null(ObjectEvaluator.GetDefaultIconForCategory("resource:Copper"));
+            Assert.Null(ObjectEvaluator.GetDefaultIconForCategory(categoryKey));
+            Assert.False(ObjectEvaluator.IsCategoryEnabled(categoryKey));
         }
 
         [Fact]

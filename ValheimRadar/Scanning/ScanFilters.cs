@@ -26,6 +26,12 @@ namespace ValheimRadar
         internal static bool ShouldReject(GameObject go, string nameLower)
         {
             if (IsDebrisName(nameLower)) return true;
+
+            // Loose item drops (ore a player dropped, a smelter's ingots, scrap from a mined pile,
+            // ...) are never tracked - only world resource nodes are. Checked structurally rather
+            // than by name so no alias can ever collide with an item prefab of the same name.
+            if (go.GetComponent<ItemDrop>() != null) return true;
+
             if (IsInsideDungeonInterior(go.transform.position)) return true;
 
             return false;

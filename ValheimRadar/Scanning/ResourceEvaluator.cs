@@ -4,11 +4,11 @@ using UnityEngine;
 namespace ValheimRadar
 {
     // Type #2 - semi-permanent resources: berries, mushrooms, wild flowers & crops, ground
-    // pickables (flint/stone/wood), ore deposits/raw ore/ingots, and wild beehives. These rarely
-    // move; once discovered they're recorded forever in PinManager's raw point store (see
-    // PinManager.RecordRawPoints/rawPersistentPoints) regardless of whether the ground they sit on
-    // is ever physically re-queried again - see ResourceScanner/PermanentSpatialScanner, which only
-    // ever scans map cells that have never been scanned before.
+    // pickables (flint/stone/wood), ore deposits, and wild beehives - world resource NODES only,
+    // never loose item drops (see the ORES section and ScanFilters). These rarely
+    // move; once discovered they're recorded in PinManager's raw point store (see
+    // PinManager.RecordScannedCells/rawPersistentPoints) and kept until a Depletable one is mined
+    // out or found missing by a rescan - see ResourceScanner/PermanentSpatialScanner.
     //
     // categoryKey values here keep the "resource:" prefix used before this file existed, even
     // though POI-shaped rules formerly living in this same table (dungeons, runestones, chests,
@@ -26,7 +26,21 @@ namespace ValheimRadar
             public readonly string VanillaIcon;
             public readonly Func<string, string> DisplayNameOverride; // nameLower -> label; null = keep hover-text/go.name derived name
 
-            public ResourceRule(string id, Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng, string vanillaIcon = null, Func<string, string> displayNameOverride = null)
+            // True for resource nodes that never grow back once taken (ore deposits/veins/scrap
+            // piles, flint/stone/branches - their Pickable has no respawn timer, so picking destroys it).
+            // Only these have their pins removed when the player mines/picks them or a rescan finds
+            // them gone (see PinManager.MarkDepletedAt / RecordScannedCells). Regrowing pickables
+            // (berries, mushrooms, flowers, crops) must stay false: a picked one hides its visuals
+            // and colliders, so a rescan would wrongly see it as gone.
+            public readonly bool Depletable;
+
+            // Ore deposits (copper/tin/silver/obsidian deposits, iron scrap piles): every deposit gets
+            // its own pin - never clustered (see ClusteringEngine.AddItem) - and the pin carries no
+            // label when its icon already identifies the ore (see PinManager.UpdateOrCreatePin).
+            // Their DisplayNameOverride is just the ore's name ("Silver"), used when no such icon resolved.
+            public readonly bool OreDeposit;
+
+            public ResourceRule(string id, Func<bool> enabled, Func<GameObject, string, bool> matches, string iconPng, string vanillaIcon = null, Func<string, string> displayNameOverride = null, bool depletable = false, bool oreDeposit = false)
             {
                 Id = id;
                 Enabled = enabled;
@@ -34,6 +48,8 @@ namespace ValheimRadar
                 IconPng = iconPng;
                 VanillaIcon = vanillaIcon;
                 DisplayNameOverride = displayNameOverride;
+                Depletable = depletable;
+                OreDeposit = oreDeposit;
             }
         }
 
@@ -78,25 +94,21 @@ namespace ValheimRadar
             // GROUND PICKABLES. Exact match specifically excludes "placeable_stone" - a player
             // hammer-placeable decoration that (surprisingly) also carries a live Pickable
             // component, so a Contains("stone")+Pickable-component guard would have matched it too.
-            new ResourceRule("Flint", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackFlint.Value, (go, n) => IsExactAlias(n, "pickable_flint"), "ground.png", "flint"),
-            new ResourceRule("Stone", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackStone.Value, (go, n) => IsExactAlias(n, "pickable_stone", "pickable_stonerock"), "ground.png", "stone"),
-            new ResourceRule("Wood", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackWood.Value, (go, n) => IsExactAlias(n, "pickable_branch", "pickable_branch_snow"), "ground.png", "wood"),
+            new ResourceRule("Flint", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackFlint.Value, (go, n) => IsExactAlias(n, "pickable_flint"), "ground.png", "flint", depletable: true),
+            new ResourceRule("Stone", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackStone.Value, (go, n) => IsExactAlias(n, "pickable_stone", "pickable_stonerock"), "ground.png", "stone", depletable: true),
+            new ResourceRule("Wood", () => RadarConfig.Group_RocksAndFlint.Value && RadarConfig.TrackWood.Value, (go, n) => IsExactAlias(n, "pickable_branch", "pickable_branch_snow"), "ground.png", "wood", depletable: true),
 
-            // ORES - each metal split into Deposit (uncollected world vein/node) / Ore (dropped or
-            // picked raw ore item) / Ingot (smelted bar) buckets, so they can never again render as
-            // one conflated pin. DisplayNameOverride guarantees the three buckets stay visually
-            // distinct on the map regardless of whether Valheim's own hover text/localization
-            // cooperates.
-            new ResourceRule("CopperDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "minerock_copper", "rock4_copper", "rock4_copper_frac"), "ore.png", "copperore", Const("Copper Deposit")),
-            new ResourceRule("CopperOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "copperore"), "ore.png", "copperore", Const("Copper Ore")),
-            new ResourceRule("CopperIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "copper"), "ore.png", "bar_copper_stack", Const("Copper")),
+            // ORES - resource NODES only (the deposits/veins/piles players mine). Loose item drops
+            // (raw ore, scrap, ingots - e.g. a smelter's output or ore a player dropped) are never
+            // tracked: ScanFilters rejects anything with an ItemDrop component, and there are
+            // deliberately no rules for their prefab names. The old Ore/Ingot rules were removed and
+            // their saved points are dropped on load (see PinManager.MigrateLegacyCategoryKey).
+            new ResourceRule("CopperDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackCopper.Value, (go, n) => IsExactAlias(n, "minerock_copper", "rock4_copper", "rock4_copper_frac"), "ore.png", "copperore", Const("Copper"), depletable: true, oreDeposit: true),
 
             // Tin is a vanilla quirk: MineRock_Tin (Destructible, no MineRock component) IS the
             // deposit object itself, unlike Copper's separate MineRock_Copper vein + rock4_copper
             // surface node.
-            new ResourceRule("TinDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "minerock_tin"), "ore.png", "TinOre", Const("Tin Deposit")),
-            new ResourceRule("TinOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tinore"), "ore.png", "TinOre", Const("Tin Ore")),
-            new ResourceRule("TinIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "tin"), "ore.png", "bar_tin_stack", Const("Tin")),
+            new ResourceRule("TinDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackTin.Value, (go, n) => IsExactAlias(n, "minerock_tin"), "ore.png", "TinOre", Const("Tin"), depletable: true, oreDeposit: true),
 
             // Iron has no confirmed surface "deposit" node in vanilla world-gen - the source is the
             // "Muddy scrap pile" (hover text $piece_mudpile), which directly drops IronScrap (no
@@ -106,23 +118,16 @@ namespace ValheimRadar
             // placed inside Sunken Crypts (filtered as dungeon interior by ScanFilters) - so omitting
             // it left every real swamp pile unpinned (issue #38). "mudpile_old" is a further variant
             // (MineRock, same hover text). The "mudpile_frac"/"mudpile2_frac" fragments are debris and
-            // stay excluded by ScanFilters' "_frac" marker. Exact match on "iron" excludes every
-            // false-positive that broke this before (fire_pit_iron, piece_cookingstation_iron,
-            // ArmorIronChest, SwordIron, iron_grate, ...) by construction, since none of those raw names
-            // equal "iron". minerock_iron is a real, registered prefab (MineRock component, matching
+            // stay excluded by ScanFilters' "_frac" marker. The dropped "IronScrap" item is not a node
+            // and is deliberately not an alias. minerock_iron is a real, registered prefab (MineRock component, matching
             // the MineRock_Copper/_Tin pattern) but unconfirmed whether vanilla world-gen ever actually
             // places it - included defensively since a name that's never placed simply never
             // matches, at no cost.
-            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "ironscrap", "mudpile", "mudpile2", "mudpile_old", "mudpile_beacon", "pickable_bogironore", "minerock_iron"), "ore.png", "ironscrap", Const("Iron Scrap")),
-            new ResourceRule("IronIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "iron"), "ore.png", null, Const("Iron")),
+            new ResourceRule("IronScrap", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackIron.Value, (go, n) => IsExactAlias(n, "mudpile", "mudpile2", "mudpile_old", "mudpile_beacon", "pickable_bogironore", "minerock_iron"), "ore.png", "ironscrap", Const("Iron"), depletable: true, oreDeposit: true),
 
-            new ResourceRule("SilverDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silvervein", "silvervein_frac", "rock3_silver", "rock3_silver_frac"), "ore.png", "silverore", Const("Silver Deposit")),
-            new ResourceRule("SilverOre", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silverore"), "ore.png", "silverore", Const("Silver Ore")),
-            new ResourceRule("SilverIngot", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silver"), "ore.png", null, Const("Silver")),
+            new ResourceRule("SilverDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackSilver.Value, (go, n) => IsExactAlias(n, "silvervein", "silvervein_frac", "rock3_silver", "rock3_silver_frac"), "ore.png", "silverore", Const("Silver"), depletable: true, oreDeposit: true),
 
-            // Obsidian is used directly as a mined material - no smelting step, so no separate
-            // Ore/Ingot split (confirmed no ObsidianOre/ObsidianIngot prefab exists).
-            new ResourceRule("ObsidianDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackObsidian.Value, (go, n) => IsExactAlias(n, "minerock_obsidian"), "ore.png", "obsidian", Const("Obsidian Deposit")),
+            new ResourceRule("ObsidianDeposit", () => RadarConfig.Group_Ores.Value && RadarConfig.TrackObsidian.Value, (go, n) => IsExactAlias(n, "minerock_obsidian"), "ore.png", "obsidian", Const("Obsidian"), depletable: true, oreDeposit: true),
 
             // Wild beehives - harvestable and renewable like the berries/mushrooms/crops above,
             // rather than a fixed structure, so it lives here rather than in PoiEvaluator.
@@ -145,6 +150,20 @@ namespace ValheimRadar
                 return true;
             }
 
+            return false;
+        }
+
+        // First rule matching the object (same order TryClassify uses), whatever its toggle state.
+        internal static bool TryMatchRule(GameObject go, string nameLower, out ResourceRule rule)
+        {
+            foreach (var r in Rules)
+            {
+                if (!r.Matches(go, nameLower)) continue;
+                rule = r;
+                return true;
+            }
+
+            rule = null;
             return false;
         }
 

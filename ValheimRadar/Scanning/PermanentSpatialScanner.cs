@@ -4,40 +4,65 @@ using UnityEngine;
 
 namespace ValheimRadar
 {
-    // "Scan each cell once, ever" spatial scanner for type #2/#3 (semi-permanent) content -
-    // resources and physics-detected points of interest don't move, and once a point is found it's
-    // recorded forever in PinManager's raw point store regardless of whether its cell is ever
-    // physically re-queried again (see PinManager.RecordRawPoints/rawPersistentPoints). So unlike
-    // SpatialCellScanner (creatures), a cell that has already been physically scanned once this
-    // world/session never needs scanning again - only genuinely new ground entering the scan radius
-    // (new exploration, not just the passage of time) does. This means the physics cost of this
-    // scanner shrinks over a session as the map gets explored, instead of paying a steady per-tick
-    // cost forever like a rotating cache would.
+    // One cell's result from a PermanentSpatialScanner pass. Verified is true only when the cell's
+    // zone was inside the loaded (object-instantiated) area when it was queried - see
+    // ScanGeometry.IsCellInLoadedArea - so the absence of a recorded point from Items can be trusted
+    // as evidence (PinManager's depletion reconciliation only looks at verified cells). Points whose
+    // height falls outside MinY..MaxY weren't covered by the query at all.
+    internal sealed class ScannedCell
+    {
+        internal readonly ScanCellKey Key;
+        internal readonly bool Verified;
+        internal readonly float MinY;
+        internal readonly float MaxY;
+        internal readonly List<TrackedItem> Items;
+
+        internal ScannedCell(ScanCellKey key, bool verified, float minY, float maxY, List<TrackedItem> items)
+        {
+            Key = key;
+            Verified = verified;
+            MinY = minY;
+            MaxY = maxY;
+            Items = items;
+        }
+    }
+
+    // Spatial scanner for type #2/#3 (semi-permanent) content - resources and physics-detected
+    // points of interest don't move, so unlike SpatialCellScanner (creatures) a cell doesn't need
+    // re-querying every few ticks. Every point found is recorded in PinManager's raw point store
+    // (see PinManager.RecordScannedCells), so a cell only has to be queried again to find something
+    // new or to notice something is gone. Three triggers, in priority order:
     //
-    // Every unscanned cell currently within scanRadius is scanned as soon as it's safe to - as early
-    // as the SAME tick it enters range, deliberately not trickled in over several ticks on its own.
-    // A cell only ever gets one chance to be recorded scanned (once it leaves scanRadius unscanned,
-    // it's not revisited unless the player physically returns), so a budget that spreads discovery
-    // across multiple ticks can outright miss ground the player only passed through briefly (flying,
-    // boating, a fast mount) - the cell enters and leaves scanRadius within a single tick and never
-    // gets queried at all. Scanning everything in range immediately guarantees that can't happen. This
-    // is safe to do unconditionally because the "once ever" model already bounds the worst case: a
-    // genuinely large single-tick burst only happens on a first join, a teleport, or a ScanRadius
-    // increase, and even then it's a one-time cost against ground that would otherwise need scanning
-    // eventually anyway.
+    //  1. A cell never scanned before is scanned the same tick it enters ScanRadius - never trickled
+    //     in over several ticks, so ground the player only passes through briefly (flying, boating,
+    //     a fast mount) can't enter and leave range unqueried.
+    //  2. A cell whose only scans so far happened while it was OUTSIDE the loaded area is scanned
+    //     again the moment it's inside it. Beyond that area ZNetScene instantiates nothing, so an
+    //     earlier scan there could only ever see (at best) a few distant objects - under the old
+    //     "scan once, ever" model this is what left resources unpinned in some regions: a cell at
+    //     the edge of ScanRadius was queried before its objects existed and never looked at again.
+    //  3. Every other in-range, loaded cell is re-scanned once its last scan is older than
+    //     rescanInterval (config ResourceRescanInterval, 0 = never), oldest first and at most
+    //     MaxRescansPerTick per call, so the steady-state cost stays a couple of cell queries per
+    //     tick. This catches anything still missed (ZDOs that reached the client late, objects out
+    //     of the vertical query range on an earlier pass) and is what lets PinManager notice
+    //     depleted resources - mined out by this player or anyone else - and drop their pins.
     //
-    // The one deliberate exception: a cell is skipped (not scanned, not marked) for as long as
-    // ScanGeometry.IsCellReady says its GameObjects haven't finished instantiating yet - see that
-    // method for why this matters specifically on dedicated servers. This trades a small chance of
-    // missing ground passed through VERY briefly while its objects are still mid-load (same class of
-    // edge case as the fast-mount case above, just gated on load state instead of only on distance)
-    // for correctness on the much more common case: a player exploring at normal speed, where the cell
-    // simply gets picked up a tick or two later once ready, instead of being permanently recorded as
-    // empty.
+    // A cell is skipped (not scanned, state untouched) while ScanGeometry.IsCellReady says its
+    // GameObjects haven't finished instantiating - see that method for why this matters on
+    // dedicated servers.
     internal sealed class PermanentSpatialScanner
     {
+        internal const int MaxRescansPerTick = 2;
+
+        private sealed class CellState
+        {
+            public float LastScanTime;
+            public bool ScannedWhileLoaded;
+        }
+
         private readonly Func<ZNetView, GameObject, string, TrackedItem> classify;
-        private readonly HashSet<ScanCellKey> scannedCells = new HashSet<ScanCellKey>();
+        private readonly Dictionary<ScanCellKey, CellState> cells = new Dictionary<ScanCellKey, CellState>();
 
         internal PermanentSpatialScanner(Func<ZNetView, GameObject, string, TrackedItem> classify)
         {
@@ -45,45 +70,78 @@ namespace ValheimRadar
         }
 
         // Called only on world unload/disconnect - deliberately NOT on ordinary config changes (e.g.
-        // ScanRadius), since a larger radius simply brings more never-before-scanned cells into range
-        // on its own; it never invalidates ground already covered, so resetting on every config
-        // change would just force wasteful re-scanning of already-explored ground.
+        // ScanRadius), since a larger radius simply brings more unscanned cells into range on its
+        // own; it never invalidates ground already covered.
         internal void Reset()
         {
-            scannedCells.Clear();
+            cells.Clear();
         }
 
-        // Physically scans every cell within scanRadius of playerPos that has never been scanned
-        // before, and returns whatever matched in them. Already-scanned cells contribute nothing here
-        // (their finds are already permanently recorded by the caller), so - unlike
-        // SpatialCellScanner.ScanBatch - this only ever returns a delta of brand-new points, never the
-        // full accumulated set.
-        internal List<TrackedItem> ScanNewCells(Vector3 playerPos, float scanRadius)
+        // Scans whatever cells within scanRadius of playerPos are due (see class comment) and
+        // returns one ScannedCell per cell actually queried this call - empty on most ticks once the
+        // surroundings are explored and fresh. Items are everything found in those cells, not just
+        // points never seen before; PinManager's raw store dedups them.
+        internal List<ScannedCell> Scan(Vector3 playerPos, float scanRadius, float now, float rescanInterval)
         {
-            List<ScanCellKey> newCells = ComputeUnscannedActiveCells(playerPos, scanRadius);
-            if (newCells.Count == 0) return new List<TrackedItem>();
+            List<ScannedCell> results = new List<ScannedCell>();
+            List<ScanCellKey> due = null;
+            Vector3 referencePos = ScanGeometry.GetReferencePosition(playerPos);
 
-            List<TrackedItem> found = new List<TrackedItem>();
-
-            foreach (var key in newCells)
+            foreach (ScanCellKey key in ComputeActiveCells(playerPos, scanRadius))
             {
-                // A cell whose objects haven't finished loading in yet (see ScanGeometry.IsCellReady -
-                // notably on a dedicated server, where ZDOs sync over the network before their
-                // GameObjects get instantiated) is deliberately left OUT of scannedCells rather than
-                // scanned-and-marked here, so it's simply retried on a later tick once it's ready -
-                // still within the same tick it entered range if already loaded, matching this
-                // scanner's "every cell gets scanned the moment it's safe to" model rather than
-                // silently recording an empty result forever.
-                if (!ScanGeometry.IsCellReady(key, playerPos.y)) continue;
+                bool loaded = ScanGeometry.IsCellInLoadedArea(key, referencePos);
+                cells.TryGetValue(key, out CellState state);
 
-                scannedCells.Add(key);
-                found.AddRange(ScanGeometry.ScanCell(key, playerPos.y, classify));
+                if (state == null || (loaded && !state.ScannedWhileLoaded))
+                {
+                    TryScanCell(key, loaded, playerPos.y, now, results);
+                }
+                else if (loaded && rescanInterval > 0f && now - state.LastScanTime >= rescanInterval)
+                {
+                    (due ?? (due = new List<ScanCellKey>())).Add(key);
+                }
             }
 
-            return found;
+            if (due == null) return results;
+
+            // Oldest first. Readiness checks (ZNetScene.IsAreaReady walks every ZDO in a 3x3 zone
+            // block) are bounded too, so a stretch of not-yet-ready cells can't blow the budget.
+            due.Sort((a, b) => cells[a].LastScanTime.CompareTo(cells[b].LastScanTime));
+            int rescanned = 0;
+            int attempts = 0;
+            foreach (ScanCellKey key in due)
+            {
+                if (rescanned >= MaxRescansPerTick || attempts >= MaxRescansPerTick * 2) break;
+                attempts++;
+                if (TryScanCell(key, loaded: true, playerPos.y, now, results)) rescanned++;
+            }
+
+            return results;
         }
 
-        private List<ScanCellKey> ComputeUnscannedActiveCells(Vector3 playerPos, float scanRadius)
+        private bool TryScanCell(ScanCellKey key, bool loaded, float playerY, float now, List<ScannedCell> results)
+        {
+            // Not ready = left exactly as it was, so it's simply retried on a later tick instead of
+            // being recorded as (partially) empty.
+            if (!ScanGeometry.IsCellReady(key, playerY)) return false;
+
+            ScanGeometry.GetCellVerticalRange(key, playerY, out float minY, out float maxY);
+            List<TrackedItem> items = ScanGeometry.ScanCell(key, minY, maxY, classify);
+
+            if (!cells.TryGetValue(key, out CellState state))
+            {
+                state = new CellState();
+                cells[key] = state;
+            }
+
+            state.LastScanTime = now;
+            state.ScannedWhileLoaded |= loaded;
+
+            results.Add(new ScannedCell(key, loaded, minY, maxY, items));
+            return true;
+        }
+
+        private static List<ScanCellKey> ComputeActiveCells(Vector3 playerPos, float scanRadius)
         {
             List<ScanCellKey> result = new List<ScanCellKey>();
 
@@ -102,17 +160,12 @@ namespace ValheimRadar
             {
                 for (int iz = minZ; iz <= maxZ; iz++)
                 {
-                    ScanCellKey key = new ScanCellKey(ix, iz);
-                    if (scannedCells.Contains(key)) continue;
-
-                    float centerX = ScanGeometry.GetCellCenter(ix);
-                    float centerZ = ScanGeometry.GetCellCenter(iz);
-                    float dx = centerX - playerPos.x;
-                    float dz = centerZ - playerPos.z;
+                    float dx = ScanGeometry.GetCellCenter(ix) - playerPos.x;
+                    float dz = ScanGeometry.GetCellCenter(iz) - playerPos.z;
 
                     if ((dx * dx) + (dz * dz) <= inclusionRadiusSq)
                     {
-                        result.Add(key);
+                        result.Add(new ScanCellKey(ix, iz));
                     }
                 }
             }

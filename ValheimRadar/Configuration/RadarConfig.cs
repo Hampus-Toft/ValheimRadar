@@ -401,6 +401,11 @@ namespace ValheimRadar
         public static ConfigEntry<int> ScanBatchCount;
         public static ConfigEntry<float> LocationScanInterval;
 
+        // Resource rescans and depleted-resource removal (see PermanentSpatialScanner,
+        // PinManager.RecordScannedCells/MarkDepletedAt, Pinning/DepletionPatches.cs).
+        public static ConfigEntry<float> ResourceRescanInterval;
+        public static ConfigEntry<bool> RemoveDepletedResources;
+
         // Manual pin removal (see PinManager.TryDismissPinAt / Pinning/MinimapPatches.cs). ClearDismissedPins
         // acts as a button: setting it true un-dismisses everything and RadarPlugin resets it to false.
         public static ConfigEntry<bool> EnablePinRemoval;
@@ -461,7 +466,7 @@ namespace ValheimRadar
         public static ConfigEntry<bool> TrackStone;
         public static ConfigEntry<bool> TrackWood;
 
-        // Ores (each now gates a Deposit/Ore/Ingot trio - see ObjectEvaluator.ResourceRules). Guck
+        // Ores (each gates its deposit/node rule only - see ResourceEvaluator.Rules). Guck
         // Sack lives here too, not under Spawners & Landmarks - it's a harvestable Swamp resource
         // players look for alongside ores, even though it's still physics-scan detected via
         // PoiEvaluator rather than a MineRock-based ResourceRule (see PoiEvaluator.Rules).
@@ -517,6 +522,8 @@ namespace ValheimRadar
             ClusterDistance = Bind(config, "1 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
             ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
             LocationScanInterval = Bind(config, "1 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
+            ResourceRescanInterval = Bind(config, "1 - General", "ResourceRescanInterval", 30f, "How often (seconds) already-scanned ground in the loaded area around you is scanned again for resources and physics-detected points of interest. Rescans pick up anything missed the first time and notice resources that are gone (see Remove Depleted Resources). Only a couple of map cells are rescanned per update tick. 0 = never rescan.", new AcceptableValueRange<float>(0f, 600f));
+            RemoveDepletedResources = Bind(config, "1 - General", "Remove Depleted Resources", true, "Remove pins for resources that don't grow back (ore deposits, obsidian, muddy scrap piles, flint, stones, branches, Guck Sacks): immediately when you hit or pick one yourself, and after rescans confirm it's gone when someone else cleared it. Berries, mushrooms, flowers and crops regrow and are never removed.");
 
             EnablePinRemoval = Bind(config, "1 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
             ClearDismissedPins = Bind(config, "1 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
@@ -528,7 +535,7 @@ namespace ValheimRadar
             Group_Mushrooms = Bind(config, "2 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
             Group_FlowersAndCrops = Bind(config, "2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for wild plants, seeds, and crops.");
             Group_RocksAndFlint = Bind(config, "2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
-            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits, raw ore, ingots, and harvestable Guck Sacks.");
+            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits (copper, tin, silver, obsidian, iron scrap piles) and harvestable Guck Sacks. Loose ore and ingots lying on the ground are never tracked.");
             Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests (buried and unburied), beehives, and the Bog Witch's camp.");
             Group_SpawnersAndLandmarks = Bind(config, "2 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile).");
             Group_BossLocations = Bind(config, "2 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
@@ -595,10 +602,10 @@ namespace ValheimRadar
             TrackStone = Bind(config, "13 - Resources (Ground)", "Stones", false, "Show loose Stones.");
             TrackWood = Bind(config, "13 - Resources (Ground)", "Wood/Branches", false, "Show loose Wood/Branches.");
 
-            TrackCopper = Bind(config, "14 - Resources (Ores)", "Copper", true, "Show Copper deposits, raw ore, and ingots.");
-            TrackTin = Bind(config, "14 - Resources (Ores)", "Tin", true, "Show Tin deposits, raw ore, and ingots.");
-            TrackIron = Bind(config, "14 - Resources (Ores)", "Iron", true, "Show Iron scrap sources and ingots.");
-            TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver deposits, raw ore, and ingots.");
+            TrackCopper = Bind(config, "14 - Resources (Ores)", "Copper", true, "Show Copper deposits.");
+            TrackTin = Bind(config, "14 - Resources (Ores)", "Tin", true, "Show Tin deposits.");
+            TrackIron = Bind(config, "14 - Resources (Ores)", "Iron", true, "Show Muddy scrap piles (iron).");
+            TrackSilver = Bind(config, "14 - Resources (Ores)", "Silver", true, "Show Silver deposits.");
             TrackObsidian = Bind(config, "14 - Resources (Ores)", "Obsidian", true, "Show Obsidian deposits.");
             TrackGuck = Bind(config, "14 - Resources (Ores)", "Guck Sack", true, "Show Guck Sacks on Swamp trees.");
 

@@ -89,7 +89,9 @@ ValheimRadar/
 │   ├── PersistedPointRules.cs   # Pure identity rules for saved raw points (ZDOID key is a hint, position confirms)
 │   ├── DismissedPins.cs         # Pure store + selection logic for pins the player dismissed via right-click
 │   ├── MinimapPatches.cs        # Harmony postfix on Minimap.RemovePin so radar pins can be right-click dismissed
-│   └── MinimapMarkerOrder.cs    # Raises the player/ship map markers above all pins (sibling order / canvas override)
+│   ├── DepletionPatches.cs      # Harmony hooks (Destructible/MineRock/MineRock5.Damage, Pickable.Interact): hide a depletable pin on the local player's first effective hit/pick
+│   ├── DepletionRules.cs        # Pure rules for when a rescan's "not found" is conclusive enough to remove a depletable point
+│   └── MinimapMarkerOrder.cs    # Raises the player/ship map markers above all pins (sibling order only)
 ├── Scanning/
 │   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
 │   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
@@ -97,7 +99,7 @@ ValheimRadar/
 │   ├── ScanFilters.cs             # Shared pre-filter (debris names, dungeon-interior objects) applied before any evaluator
 │   ├── ScanGeometry.cs            # Shared Physics.OverlapBox cell geometry/query + ScanCellKey
 │   ├── SpatialCellScanner.cs      # Rotating per-cell cache scanner - Type #1 (ephemeral: creatures)
-│   ├── PermanentSpatialScanner.cs # "Scan each cell once, ever" scanner - Types #2/#3 (semi-permanent: resources/physics-POI)
+│   ├── PermanentSpatialScanner.cs # Scan-new-cells-immediately + budgeted-rescan scanner - Types #2/#3 (semi-permanent: resources/physics-POI)
 │   ├── CreatureEvaluator.cs       # Type #1 classification: creatures/fish/Leviathan (used by CreatureScanner)
 │   ├── CreatureScanner.cs         # Type #1 scan loop, wraps SpatialCellScanner
 │   ├── ResourceEvaluator.cs       # Type #2 classification: trees/ores/berries/ground pickables (used by ResourceScanner)
@@ -109,6 +111,7 @@ ValheimRadar/
 │   └── ICONS.md                  # Icon resolution order & override naming, for reference when touching Pinning/
 ├── Thunderstore/
 │   └── Pack.ps1, manifest.template.json, README.md, icon.png   # ThunderstorePack packaging assets
+├── RadarLog.cs                  # RadarLog.Diag: routine logging, silent unless DiagnosticLogging is on
 └── RadarPlugin.cs               # Plugin lifecycle, update loop, and per-scanner Reset()/scan orchestration
 
 ValheimRadar.Tests/              # xunit tests mirroring the folders above (Models/, Pinning/, Scanning/)
@@ -123,7 +126,7 @@ content types behave differently:
 | Type | Scanner | Behavior | Pin store |
 |---|---|---|---|
 | #1 creatures | `CreatureScanner` -> `SpatialCellScanner` | Rotating per-cell cache, re-queried forever; fully reclustered every tick | `PinManager.SyncTransientClusters` - in memory only |
-| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | Each cell scanned **once, ever**; returns only newly found points | `rawPersistentPoints` (keyed by ZDOID), clustered incrementally, saved to disk |
+| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally, saved to disk |
 | #3 Locations (dungeons, altars, ruins...) | `LocationScanner` | Reads `ZoneSystem`, no physics | `rawLocationPoints`, one pin per Location, no clustering, saved to disk |
 
 **State and persistence.** `PinManager` is a static class holding all pin state. Persistence is
@@ -156,6 +159,11 @@ be tested via `dotnet test`.
 resolution order in `docs/ICONS.md`). Jotunn's lazy `AssetManager` init can throw on some mod
 lists, so `VanillaIconResolver.TryResolveIcon` latches vanilla lookups off for the session
 instead of crashing the scan loop. Keep any new Jotunn call behind that kind of guard.
+
+**Logging.** Routine per-event output (pin created/updated/removed, scan summaries) goes through
+`RadarLog.Diag`, which stays silent unless the `DiagnosticLogging` config is on. Only errors and
+one-off warnings call `Debug.LogError`/`LogWarning` directly, so don't add raw `Debug.Log` calls
+to the scan or pin loops.
 
 **Tests cover pure logic only** (evaluator matching, clustering, cell geometry, config,
 icon-name tables). Code that needs `Physics`, `ZNetScene`, `ZoneSystem` or `Minimap` can't run
