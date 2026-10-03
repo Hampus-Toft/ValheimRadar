@@ -12,11 +12,12 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.11.0";
+        public const string PluginVersion = "1.12.0";
 
-        // How often to flush newly-discovered persistent (resource/structure) pin positions to
-        // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
-        private const float PersistSaveInterval = 30f;
+        // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
+        // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
+        // most this much. ClearAllPins also flushes on disconnect.
+        private const float PersistSaveInterval = 2f;
 
         // Troubleshooting only (RadarConfig.DiagnosticLogging): while the large map is open, log the pin-name
         // state a few times per session, never continuously.
@@ -60,8 +61,6 @@ namespace ValheimRadar
         {
             harmony?.UnpatchSelf();
             Config.SettingChanged -= OnConfigurationChanged;
-            PinManager.SaveWorldPins(currentWorldName);
-            PinManager.SaveLocationPins(currentWorldName);
             PinManager.ClearAllPins();
             CreatureScanner.Reset();
             ResourceScanner.Reset();
@@ -108,8 +107,6 @@ namespace ValheimRadar
                 // to become invalid anyway.
                 if (wasActive)
                 {
-                    PinManager.SaveWorldPins(currentWorldName);
-                    PinManager.SaveLocationPins(currentWorldName);
                     PinManager.ClearAllPins();
                     CreatureScanner.Reset();
                     ResourceScanner.Reset();
@@ -137,12 +134,9 @@ namespace ValheimRadar
                 {
                     MinimapMarkerOrder.Apply(Minimap.instance);
                 }
-                PinManager.LoadDismissedPins(currentWorldName);
-                PinManager.LoadRespawnTimers(currentWorldName);
-                PinManager.LoadWorldPins(currentWorldName);
+                PinManager.OpenWorld(currentWorldName);
                 PinManager.RebuildPersistentClusters(ClusterDistance);
                 PinManager.SyncPersistentClusters(Minimap.instance);
-                PinManager.LoadLocationPins(currentWorldName);
                 PinManager.DrawLoadedLocationPins(Minimap.instance);
                 wasActive = true;
             }
@@ -177,8 +171,7 @@ namespace ValheimRadar
             if (saveTimer >= PersistSaveInterval)
             {
                 saveTimer = 0f;
-                PinManager.SaveWorldPins(currentWorldName);
-                PinManager.SaveLocationPins(currentWorldName);
+                PinManager.FlushPersistence();
             }
         }
 

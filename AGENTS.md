@@ -58,7 +58,7 @@ This document defines operating guidelines, safety boundaries, and workflows for
 - **Clean build:** `dotnet clean && dotnet build -c Release`.
 - **Pack a Thunderstore-importable zip:** `dotnet build -c Release -t:ThunderstorePack`
   from `ValheimRadar/`. Produces a zip under `ValheimRadar/bin/Thunderstore` containing
-  `manifest.json` + `icon.png` + `README.md` + the plugin DLL, via `Thunderstore/Pack.ps1`.
+  `manifest.json` + `icon.png` + `README.md` + the plugin DLL + the native SQLite libraries, via `Thunderstore/Pack.ps1`.
   `manifest.json`'s `version_number` is generated from `RadarPlugin.PluginVersion` at pack
   time - never hand-edit a version number in `Thunderstore/manifest.template.json`; bump the
   constant in `RadarPlugin.cs` instead. Override the namespace with
@@ -82,10 +82,16 @@ ValheimRadar/
 │   ├── ItemCluster.cs           # Centroid, label, and cluster key computation
 │   ├── TrackedItem.cs           # DTO representing a scanned creature/resource/POI (ZDOID, Position, Icon)
 │   └── TrackedLocation.cs       # DTO representing a scanned world Location/POI (no ZDOID)
+├── Persistence/
+│   ├── SqliteNative.cs          # P/Invoke to native e_sqlite3 + loading it from the plugin folder
+│   ├── SqliteConnection.cs      # Thin connection/statement wrapper (UTF-8, transactions)
+│   ├── PinDatabase.cs           # Per-world SQLite schema and queries (PinData/<world>.db)
+│   └── LegacyPinFiles.cs        # Parsers for the pre-v1.12 .txt saves, used only for the one-time import
 ├── Pinning/
 │   ├── IconLoader.cs            # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
 │   ├── VanillaIconResolver.cs   # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
-│   ├── PinManager.cs            # Minimap pin sync, updates, removals, persistence, and icon resolution order
+│   ├── PinManager.cs            # Minimap pin sync, updates, removals, and icon resolution order
+│   ├── PinManager.Persistence.cs # Partial: loads/queues/flushes the world database, imports legacy .txt saves
 │   ├── PersistedPointRules.cs   # Pure identity rules for saved raw points (ZDOID key is a hint, position confirms)
 │   ├── DismissedPins.cs         # Pure store + selection logic for pins the player dismissed via right-click
 │   ├── MinimapPatches.cs        # Harmony postfix on Minimap.RemovePin so radar pins can be right-click dismissed
@@ -127,12 +133,19 @@ content types behave differently:
 | Type | Scanner | Behavior | Pin store |
 |---|---|---|---|
 | #1 creatures | `CreatureScanner` -> `SpatialCellScanner` | Rotating per-cell cache, re-queried forever; fully reclustered every tick | `PinManager.SyncTransientClusters` - in memory only |
-| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`); regrowing pickables are hidden once picked (`Pickable.SetPicked`, any player) until their `Pickable.m_respawnTimeMinutes` of world time passes or the owner reports them regrown (`RespawnTimerStore`, `<world>.respawn.txt`) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally, saved to disk |
+| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`); regrowing pickables are hidden once picked (`Pickable.SetPicked`, any player) until their `Pickable.m_respawnTimeMinutes` of world time passes or the owner reports them regrown (`RespawnTimerStore`, persisted in the world database) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally, saved to disk |
 | #3 Locations (dungeons, altars, ruins...) | `LocationScanner` | Reads `ZoneSystem`, no physics | `rawLocationPoints`, one pin per Location, no clustering, saved to disk |
 
-**State and persistence.** `PinManager` is a static class holding all pin state. Persistence is
-pipe-delimited text (Unity's `JsonUtility` isn't referenced) at
-`BepInEx/config/ValheimRadar/PinData/<world>.txt` and `<world>.locations.txt`. Every
+**State and persistence.** `PinManager` is a static class holding all pin state; its persistence
+half (`Pinning/PinManager.Persistence.cs`) keeps each world in one SQLite file at
+`BepInEx/config/ValheimRadar/PinData/<world>.db` (`Persistence/PinDatabase.cs`: points, locations,
+dismissed pins, respawn timers). Changes are queued and flushed as one small transaction every 2 s
+and on disconnect - never rewrite whole tables from the scan/pin loops. SQLite is called through
+our own P/Invoke layer (`Persistence/SqliteNative.cs`); the native `e_sqlite3.dll`/`libe_sqlite3.so`
+come from the `SQLitePCLRaw.lib.e_sqlite3` NuGet package and must ship next to the plugin DLL (the
+build and `Pack.ps1` copy them). If the library can't load, pins still work but nothing is saved
+that session. The pre-v1.12 `.txt` files are imported once by `OpenWorld` and then deleted
+(`Persistence/LegacyPinFiles.cs`). Every
 `Reset()`/`ClearAllPins()` must run on disconnect so static state never leaks between worlds -
 when adding a new scanner or cache, wire it into both reset sites in `RadarPlugin`.
 

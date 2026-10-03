@@ -80,6 +80,18 @@ namespace ValheimRadar
             Count = 0;
         }
 
+        // Every dismissed point as (categoryKey, position) - what PinDatabase stores.
+        public IEnumerable<KeyValuePair<string, Vector3>> Entries
+        {
+            get
+            {
+                foreach (var kvp in byCategory)
+                {
+                    foreach (Vector3 p in kvp.Value) yield return new KeyValuePair<string, Vector3>(kvp.Key, p);
+                }
+            }
+        }
+
         // One line per dismissed point (categoryKey|x|y|z, categoryKey URI-escaped so it can never
         // contain the '|' delimiter), preceded by a version header. Same pipe-delimited style as the
         // PinData files, in its own sibling file so existing save files are untouched.
