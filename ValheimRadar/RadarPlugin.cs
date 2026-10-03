@@ -12,7 +12,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.10.0";
+        public const string PluginVersion = "1.11.0";
 
         // How often to flush newly-discovered persistent (resource/structure) pin positions to
         // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
@@ -85,6 +85,12 @@ namespace ValheimRadar
             // for the player to walk back into scan range.
             PinManager.RefreshCategoryVisibility(Minimap.instance);
 
+            // Turning "Hide Picked Until Respawn" off shows the pickables it was hiding right away.
+            if (RadarConfig.HidePickedUntilRespawn != null && !RadarConfig.HidePickedUntilRespawn.Value)
+            {
+                PinManager.ClearRespawnTimers();
+            }
+
             // Only the creature scanner's rotation cache is reset here (ScanRadius/ScanBatchCount
             // especially can invalidate it). ResourceScanner/PoiScanner deliberately do NOT reset on
             // config changes - already-explored ground stays valid regardless of toggles and is
@@ -132,6 +138,7 @@ namespace ValheimRadar
                     MinimapMarkerOrder.Apply(Minimap.instance);
                 }
                 PinManager.LoadDismissedPins(currentWorldName);
+                PinManager.LoadRespawnTimers(currentWorldName);
                 PinManager.LoadWorldPins(currentWorldName);
                 PinManager.RebuildPersistentClusters(ClusterDistance);
                 PinManager.SyncPersistentClusters(Minimap.instance);
@@ -208,6 +215,9 @@ namespace ValheimRadar
             // so, which must keep happening on a fully-explored map too.
             PinManager.RecordScannedCells(resourceCells, ClusterDistance, now, removeDepleted);
             PinManager.RecordScannedCells(poiCells, ClusterDistance, now, removeDepleted);
+
+            // Picked berries/mushrooms/etc. whose respawn time has passed (world time) go back on the map.
+            if (ZNet.instance != null) PinManager.UpdateRespawnTimers(ZNet.instance.GetTimeSeconds());
             PinManager.SyncPersistentClusters(minimap);
         }
     }

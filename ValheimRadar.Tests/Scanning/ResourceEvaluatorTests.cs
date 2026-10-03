@@ -187,5 +187,26 @@ namespace ValheimRadar.Tests.Scanning
         {
             Assert.False(ObjectEvaluator.TryGetDepletableCategory(null, nameLower, out _));
         }
+
+        [Theory]
+        [InlineData("raspberrybush", "resource:Raspberry")]
+        [InlineData("pickable_mushroom_yellow", "resource:YellowMushroom")]
+        [InlineData("pickable_thistle", "resource:Thistle")]
+        [InlineData("pickable_barley_wild", "resource:Barley")]
+        public void TryGetRespawningCategory_RegrowingPrefabs_ResolveToTheirCategory(string nameLower, string expected)
+        {
+            Assert.True(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out string categoryKey));
+            Assert.Equal(expected, categoryKey);
+        }
+
+        // Depletable resources are removed, not timed; unmatched names aren't resources at all.
+        [Theory]
+        [InlineData("pickable_flint")]
+        [InlineData("rock4_copper")]
+        [InlineData("placeable_stone")]
+        public void TryGetRespawningCategory_OtherPrefabs_AreIgnored(string nameLower)
+        {
+            Assert.False(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out _));
+        }
     }
 }

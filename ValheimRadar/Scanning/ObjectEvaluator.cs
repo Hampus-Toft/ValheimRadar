@@ -104,6 +104,18 @@ namespace ValheimRadar
             return false;
         }
 
+        // Classifies a live object (e.g. a Pickable the player just picked) and returns its categoryKey
+        // only if it's a resource that grows back - i.e. matched by a non-Depletable ResourceRule
+        // (berries, mushrooms, flowers, crops). The caller still checks the Pickable's own respawn timer.
+        internal static bool TryGetRespawningCategory(GameObject go, string nameLower, out string categoryKey)
+        {
+            categoryKey = null;
+            if (!ResourceEvaluator.TryMatchRule(go, nameLower, out var resourceRule) || resourceRule.Depletable) return false;
+
+            categoryKey = $"resource:{resourceRule.Id}";
+            return true;
+        }
+
         // Only resource/POI and location categories are persisted to disk (see PinManager), so this
         // only needs to resolve icons for "resource:"/"location:" keys - used to re-resolve the icon
         // Sprite after loading cached pin positions from a previous session.

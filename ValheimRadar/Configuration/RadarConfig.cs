@@ -406,6 +406,9 @@ namespace ValheimRadar
         public static ConfigEntry<float> ResourceRescanInterval;
         public static ConfigEntry<bool> RemoveDepletedResources;
 
+        // Hiding picked regrowing pickables until they grow back (see PinManager.MarkPickedAt).
+        public static ConfigEntry<bool> HidePickedUntilRespawn;
+
         // Manual pin removal (see PinManager.TryDismissPinAt / Pinning/MinimapPatches.cs). ClearDismissedPins
         // acts as a button: setting it true un-dismisses everything and RadarPlugin resets it to false.
         public static ConfigEntry<bool> EnablePinRemoval;
@@ -523,7 +526,8 @@ namespace ValheimRadar
             ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
             LocationScanInterval = Bind(config, "1 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
             ResourceRescanInterval = Bind(config, "1 - General", "ResourceRescanInterval", 30f, "How often (seconds) already-scanned ground in the loaded area around you is scanned again for resources and physics-detected points of interest. Rescans pick up anything missed the first time and notice resources that are gone (see Remove Depleted Resources). Only a couple of map cells are rescanned per update tick. 0 = never rescan.", new AcceptableValueRange<float>(0f, 600f));
-            RemoveDepletedResources = Bind(config, "1 - General", "Remove Depleted Resources", true, "Remove pins for resources that don't grow back (ore deposits, obsidian, muddy scrap piles, flint, stones, branches, Guck Sacks): immediately when you hit or pick one yourself, and after rescans confirm it's gone when someone else cleared it. Berries, mushrooms, flowers and crops regrow and are never removed.");
+            RemoveDepletedResources = Bind(config, "1 - General", "Remove Depleted Resources", true, "Remove pins for resources that don't grow back (ore deposits, obsidian, muddy scrap piles, flint, stones, branches, Guck Sacks): immediately when you hit or pick one yourself, and after rescans confirm it's gone when someone else cleared it. Berries, mushrooms, flowers and crops regrow and are never removed (see Hide Picked Until Respawn).");
+            HidePickedUntilRespawn = Bind(config, "1 - General", "Hide Picked Until Respawn", true, "When you pick berries, mushrooms, flowers or crops, hide that pin until it grows back (each pickable's own respawn time, in in-game world time) instead of leaving it on the map. Turning this off shows every currently hidden pin again.");
 
             EnablePinRemoval = Bind(config, "1 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
             ClearDismissedPins = Bind(config, "1 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");

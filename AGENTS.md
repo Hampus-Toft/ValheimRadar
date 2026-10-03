@@ -89,7 +89,8 @@ ValheimRadar/
 │   ├── PersistedPointRules.cs   # Pure identity rules for saved raw points (ZDOID key is a hint, position confirms)
 │   ├── DismissedPins.cs         # Pure store + selection logic for pins the player dismissed via right-click
 │   ├── MinimapPatches.cs        # Harmony postfix on Minimap.RemovePin so radar pins can be right-click dismissed
-│   ├── DepletionPatches.cs      # Harmony hooks (Destructible/MineRock/MineRock5.Damage, Pickable.Interact): hide a depletable pin on the local player's first effective hit/pick
+│   ├── DepletionPatches.cs      # Harmony hooks (Destructible/MineRock/MineRock5.Damage, Pickable.Interact): hide a depletable pin on the local player's first effective hit/pick, or a regrowing pickable's pin until it respawns
+│   ├── RespawnTimers.cs         # Pure store of picked regrowing pickables (berries/mushrooms/crops) hidden until their respawn world time
 │   ├── DepletionRules.cs        # Pure rules for when a rescan's "not found" is conclusive enough to remove a depletable point
 │   └── MinimapMarkerOrder.cs    # Raises the player/ship map markers above all pins (sibling order only)
 ├── Scanning/
@@ -126,7 +127,7 @@ content types behave differently:
 | Type | Scanner | Behavior | Pin store |
 |---|---|---|---|
 | #1 creatures | `CreatureScanner` -> `SpatialCellScanner` | Rotating per-cell cache, re-queried forever; fully reclustered every tick | `PinManager.SyncTransientClusters` - in memory only |
-| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally, saved to disk |
+| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`); regrowing pickables the local player picks are hidden until their `Pickable.m_respawnTimeMinutes` of world time passes (`RespawnTimerStore`, `<world>.respawn.txt`) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally, saved to disk |
 | #3 Locations (dungeons, altars, ruins...) | `LocationScanner` | Reads `ZoneSystem`, no physics | `rawLocationPoints`, one pin per Location, no clustering, saved to disk |
 
 **State and persistence.** `PinManager` is a static class holding all pin state. Persistence is

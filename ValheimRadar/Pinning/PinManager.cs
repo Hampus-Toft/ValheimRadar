@@ -90,6 +90,12 @@ namespace ValheimRadar
         private static readonly DismissedPinStore dismissedPins = new DismissedPinStore();
         private static string dismissedPinsWorld;
 
+        // Regrowing pickables the local player picked, hidden until they grow back (see MarkPickedAt /
+        // UpdateRespawnTimers). Like dismissals they're excluded from clustering while hidden, but the
+        // raw point stays recorded. Persisted in <world>.respawn.txt.
+        private static readonly RespawnTimerStore respawnTimers = new RespawnTimerStore();
+        private static string respawnTimersWorld;
+
         private static string ConfigIconFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar");
         private static string PinDataFolder => Path.Combine(Paths.ConfigPath, "ValheimRadar", "PinData");
 
@@ -121,7 +127,13 @@ namespace ValheimRadar
             locationPointsDirty = false;
             dismissedPins.Clear();
             dismissedPinsWorld = null;
+            respawnTimers.Clear();
+            respawnTimersWorld = null;
         }
+
+        // A recorded point that's kept but not drawn: dismissed by the player, or picked and regrowing.
+        private static bool IsHidden(TrackedItem point) =>
+            dismissedPins.Contains(point.CategoryKey, point.Position) || respawnTimers.Contains(point.CategoryKey, point.Position);
 
         // Merges newly-scanned persistent points into the durable raw store, keyed by ZDOID so the
         // same stationary world object is never recorded twice, and folds each genuinely-new point
@@ -142,7 +154,7 @@ namespace ValheimRadar
                 rawPointsDirty = true;
 
                 // Still recorded above (so it's never re-discovered as "new"), just never clustered/pinned.
-                if (dismissedPins.Contains(item.CategoryKey, item.Position)) continue;
+                if (IsHidden(item)) continue;
 
                 ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, item, maxDistance);
                 if (!dirtyPersistentClusters.Contains(affected)) dirtyPersistentClusters.Add(affected);
@@ -162,7 +174,7 @@ namespace ValheimRadar
             var clusterable = new List<TrackedItem>(rawPersistentPoints.Count);
             foreach (var point in rawPersistentPoints.Values)
             {
-                if (!dismissedPins.Contains(point.CategoryKey, point.Position)) clusterable.Add(point);
+                if (!IsHidden(point)) clusterable.Add(point);
             }
 
             persistentClusters.AddRange(ClusteringEngine.ClusterItems(clusterable, maxDistance));
@@ -258,6 +270,116 @@ namespace ValheimRadar
             SaveDismissedPins();
 
             RadarLog.Diag($"[ValheimRadar] point-mined name={mined.DisplayName} pos={mined.Position.x:F1},{mined.Position.y:F1},{mined.Position.z:F1}");
+        }
+
+        // The local player just picked a regrowing pickable at position (see DepletionPatches) - hide
+        // its recorded point until respawnAt (world time, see RespawnTimerStore), when
+        // UpdateRespawnTimers puts it back on the map. Points not recorded yet are ignored.
+        internal static void MarkPickedAt(string categoryKey, Vector3 position, double pickedAt, double respawnAt)
+        {
+            var candidates = new List<TrackedItem>();
+            var positions = new List<Vector3>();
+            foreach (TrackedItem point in RawPointsNear(position, DepletionRules.HitMatchRadius))
+            {
+                if (point.CategoryKey != categoryKey || IsHidden(point)) continue;
+
+                candidates.Add(point);
+                positions.Add(point.Position);
+            }
+
+            int index = PinDismissal.IndexOfClosest(positions, position, DepletionRules.HitMatchRadius);
+            if (index < 0) return;
+
+            TrackedItem picked = candidates[index];
+            respawnTimers.Add(picked.CategoryKey, picked.Position, pickedAt, respawnAt);
+            DetachFromCluster(picked, "picked");
+            SaveRespawnTimers();
+
+            RadarLog.Diag($"[ValheimRadar] point-picked name={picked.DisplayName} respawnInSeconds={respawnAt - pickedAt:F0} pos={picked.Position.x:F1},{picked.Position.y:F1},{picked.Position.z:F1}");
+        }
+
+        // Puts every picked pickable whose respawn time has passed (world time now) back into the
+        // persistent clusters; the next SyncPersistentClusters redraws it. Called every scan tick.
+        internal static void UpdateRespawnTimers(double now)
+        {
+            if (respawnTimers.Count == 0) return;
+
+            List<RespawnTimerStore.Entry> expired = respawnTimers.TakeExpired(now);
+            if (expired == null) return;
+
+            foreach (var entry in expired)
+            {
+                foreach (TrackedItem point in RawPointsNear(entry.Position, RespawnTimerStore.MatchRadius))
+                {
+                    if (point.CategoryKey != entry.CategoryKey || DepletionRules.DistanceXZ(point.Position, entry.Position) > RespawnTimerStore.MatchRadius) continue;
+                    if (IsHidden(point)) continue;
+
+                    // No valid clustering yet (a full rebuild is pending) - that rebuild picks the point up.
+                    if (clusteredMaxDistance >= 0f)
+                    {
+                        ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, point, clusteredMaxDistance);
+                        if (!dirtyPersistentClusters.Contains(affected)) dirtyPersistentClusters.Add(affected);
+                    }
+
+                    RadarLog.Diag($"[ValheimRadar] point-respawned name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
+                }
+            }
+
+            SaveRespawnTimers();
+        }
+
+        // Shows every pickable currently hidden by a respawn timer again (the feature was turned off).
+        public static void ClearRespawnTimers()
+        {
+            if (respawnTimers.Count == 0) return;
+
+            respawnTimers.Clear();
+            SaveRespawnTimers();
+            clusteredMaxDistance = -1f; // next RecordRawPoints rebuilds and resyncs every cluster
+        }
+
+        public static void LoadRespawnTimers(string worldName)
+        {
+            respawnTimers.Clear();
+            respawnTimersWorld = worldName;
+
+            if (string.IsNullOrEmpty(worldName)) return;
+
+            string path = GetSaveFilePath(worldName, ".respawn.txt");
+            if (!File.Exists(path)) return;
+
+            try
+            {
+                respawnTimers.Load(File.ReadAllLines(path));
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to load respawn timers: {ex.Message}");
+            }
+        }
+
+        // Written immediately on every change, like SaveDismissedPins.
+        private static void SaveRespawnTimers()
+        {
+            if (string.IsNullOrEmpty(respawnTimersWorld)) return;
+
+            string path = GetSaveFilePath(respawnTimersWorld, ".respawn.txt");
+
+            try
+            {
+                if (respawnTimers.Count == 0)
+                {
+                    if (File.Exists(path)) File.Delete(path);
+                    return;
+                }
+
+                Directory.CreateDirectory(PinDataFolder);
+                File.WriteAllLines(path, respawnTimers.Serialize());
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to save respawn timers: {ex.Message}");
+            }
         }
 
         // Takes one point out of whichever persistent cluster holds it. An emptied cluster loses its
