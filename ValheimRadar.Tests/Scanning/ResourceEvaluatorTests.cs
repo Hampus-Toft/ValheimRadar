@@ -111,6 +111,34 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Equal(expectedName, ObjectEvaluator.GetResourceDisplayNameOverride(categoryKey, rawName));
         }
 
+        // Pins that drop their name once the icon identifies them: ore deposits and regrowing pickables.
+        [Theory]
+        [InlineData("resource:SilverDeposit", true)]
+        [InlineData("resource:Raspberry", true)]
+        [InlineData("resource:Blueberry", true)]
+        [InlineData("resource:BlueMushroom", true)]
+        [InlineData("resource:Thistle", true)]
+        [InlineData("resource:Magecap", true)]
+        [InlineData("resource:Flint", false)]
+        [InlineData("resource:Beehives", false)]
+        [InlineData("location:Crypt", false)]
+        [InlineData(null, false)]
+        public void HasIconOnlyLabel_OreDepositsAndRegrowingPickables(string categoryKey, bool expected)
+        {
+            Assert.Equal(expected, ObjectEvaluator.HasIconOnlyLabel(categoryKey));
+        }
+
+        // Every regrowing rule (not depletable, not the beehive structure) drops its name.
+        [Fact]
+        public void HasIconOnlyLabel_CoversEveryRegrowingRule()
+        {
+            foreach (var rule in ResourceEvaluator.Rules)
+            {
+                if (rule.Depletable || rule.Id == "Beehives") continue;
+                Assert.True(rule.IconOnlyLabel, rule.Id);
+            }
+        }
+
         [Theory]
         [InlineData("resource:Flint")]
         [InlineData("resource:Raspberry")]

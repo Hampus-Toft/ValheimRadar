@@ -574,7 +574,7 @@ namespace ValheimRadar
                 if (string.IsNullOrEmpty(key)) continue;
 
                 currentScanKeys.Add(key);
-                UpdateOrCreatePin(minimap, key, cluster.GetCentroid(), LabelFor(cluster), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, key, cluster.GetCentroid(), LabelFor(cluster), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey, cluster.Items.Count);
             }
 
             List<string> toRemove = new List<string>();
@@ -627,7 +627,7 @@ namespace ValheimRadar
                     LogPinRemoved(cluster.LastSyncedKey, "recluster");
                 }
 
-                UpdateOrCreatePin(minimap, newKey, cluster.GetCentroid(), LabelFor(cluster), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey);
+                UpdateOrCreatePin(minimap, newKey, cluster.GetCentroid(), LabelFor(cluster), cluster.DisplayName, cluster.RawName, cluster.Icon, cluster.IsPersistent, cluster.CategoryKey, cluster.Items.Count);
                 cluster.LastSyncedKey = newKey;
                 syncedKeys?.Add(newKey);
             }
@@ -870,7 +870,7 @@ namespace ValheimRadar
             return icon != IconLoader.LoadPng(Path.Combine(ConfigIconFolder, categoryPng));
         }
 
-        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string displayName, string rawName, Sprite icon, bool isPersistent, string categoryKey)
+        private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string displayName, string rawName, Sprite icon, bool isPersistent, string categoryKey, int count = 1)
         {
             bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
 
@@ -879,11 +879,12 @@ namespace ValheimRadar
                 icon = TryResolveMissingIcon(categoryKey, rawName);
             }
 
-            // An ore deposit whose icon already shows which ore it is needs no label; without such
-            // an icon it keeps its plain ore name ("Silver").
-            if (ObjectEvaluator.IsOreDepositCategory(categoryKey) && IconIdentifiesType(icon, categoryKey))
+            // An ore deposit or regrowing pickable whose icon already shows what it is needs no name -
+            // just a cluster's count ("5x"), or nothing for a single one. Without such an icon it keeps
+            // its plain label ("Silver", "3x Blueberry Bush").
+            if (ObjectEvaluator.HasIconOnlyLabel(categoryKey) && IconIdentifiesType(icon, categoryKey))
             {
-                name = string.Empty;
+                name = ItemCluster.BuildLabel(displayName, count, hideName: true);
             }
 
             if (activeClusterPins.TryGetValue(clusterKey, out PinEntry existing))

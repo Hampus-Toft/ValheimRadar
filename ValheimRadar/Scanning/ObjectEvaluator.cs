@@ -58,6 +58,15 @@ namespace ValheimRadar
             return ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule) && rule.OreDeposit;
         }
 
+        // True when the category's pins drop their name once the icon identifies the type (see
+        // ResourceRule.IconOnlyLabel): ore deposits and regrowing pickables.
+        public static bool HasIconOnlyLabel(string categoryKey)
+        {
+            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return false;
+
+            return ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule) && rule.IconOnlyLabel;
+        }
+
         // The fixed display name a resource rule assigns from the prefab name alone, or null when the
         // rule derives it from the live object instead. Lets saved points pick up renamed labels (e.g.
         // "Silver Deposit" -> "Silver") so they still dedup against freshly scanned ones.
