@@ -58,6 +58,15 @@ namespace ValheimRadar
             return ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule) && rule.OreDeposit;
         }
 
+        // True when the category's pins drop their name once the icon identifies the type (see
+        // ResourceRule.IconOnlyLabel): ore deposits and regrowing pickables.
+        public static bool HasIconOnlyLabel(string categoryKey)
+        {
+            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return false;
+
+            return ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule) && rule.IconOnlyLabel;
+        }
+
         // The fixed display name a resource rule assigns from the prefab name alone, or null when the
         // rule derives it from the live object instead. Lets saved points pick up renamed labels (e.g.
         // "Silver Deposit" -> "Silver") so they still dedup against freshly scanned ones.
@@ -102,6 +111,18 @@ namespace ValheimRadar
             }
 
             return false;
+        }
+
+        // Classifies a live object (e.g. a Pickable the player just picked) and returns its categoryKey
+        // only if it's a resource that grows back - i.e. matched by a non-Depletable ResourceRule
+        // (berries, mushrooms, flowers, crops). The caller still checks the Pickable's own respawn timer.
+        internal static bool TryGetRespawningCategory(GameObject go, string nameLower, out string categoryKey)
+        {
+            categoryKey = null;
+            if (!ResourceEvaluator.TryMatchRule(go, nameLower, out var resourceRule) || resourceRule.Depletable) return false;
+
+            categoryKey = $"resource:{resourceRule.Id}";
+            return true;
         }
 
         // Only resource/POI and location categories are persisted to disk (see PinManager), so this

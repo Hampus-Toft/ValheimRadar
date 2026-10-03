@@ -16,6 +16,14 @@ namespace ValheimRadar
     // swinging an antler pickaxe at obsidian ("too hard") doesn't hide its pin. Pickable.Interact
     // likewise runs on the picking player's client. Everything is read-only prefixes/postfixes: the
     // vanilla methods always run unchanged, and any exception is swallowed.
+    //
+    // Pickables that grow back (berries, mushrooms, flowers, crops - m_respawnTimeMinutes > 0) aren't
+    // depleted: once picked their pin is hidden for that same respawn time (PinManager.MarkPickedAt).
+    // That's driven by Pickable.SetPicked rather than Interact: Interact is only a request (the owner
+    // may ignore it, and area-harvest mods call it several times per pickable in one frame, long
+    // before the owner's answer arrives), while SetPicked runs on every client exactly when the owner
+    // has really picked it (RPC_Pick -> RPC_SetPicked to everybody) - and again with false when it
+    // grows back. So picks by any player in the loaded area count, however they were triggered.
     internal static class DepletionPatches
     {
         private static bool loggedFailure;
@@ -26,6 +34,7 @@ namespace ValheimRadar
             Patch(harmony, typeof(MineRock), nameof(MineRock.Damage), nameof(MineRockDamagePrefix), isPrefix: true);
             Patch(harmony, typeof(MineRock5), nameof(MineRock5.Damage), nameof(MineRock5DamagePrefix), isPrefix: true);
             Patch(harmony, typeof(Pickable), nameof(Pickable.Interact), nameof(PickableInteractPostfix), isPrefix: false);
+            Patch(harmony, typeof(Pickable), nameof(Pickable.SetPicked), nameof(PickableSetPickedPostfix), isPrefix: false);
         }
 
         // Each target patched on its own so one failing (e.g. a game update renaming a method) only
@@ -69,11 +78,26 @@ namespace ValheimRadar
             });
         }
 
+        // Regrowing pickables are handled by PickableSetPickedPostfix instead.
         private static void PickableInteractPostfix(Pickable __instance, Humanoid character)
         {
             Guard(() =>
             {
-                if (character != null && character == Player.m_localPlayer) Report(__instance);
+                if (character == null || character != Player.m_localPlayer) return;
+                if (__instance.m_respawnTimeMinutes > 0f) return;
+
+                Report(__instance);
+            });
+        }
+
+        private static void PickableSetPickedPostfix(Pickable __instance, bool picked)
+        {
+            Guard(() =>
+            {
+                if (__instance.m_respawnTimeMinutes <= 0f) return;
+
+                if (picked) ReportPicked(__instance);
+                else ReportRegrown(__instance);
             });
         }
 
@@ -108,6 +132,36 @@ namespace ValheimRadar
             }
 
             PinManager.MarkDepletedAt(categoryKey, root.transform.position);
+        }
+
+        private static void ReportPicked(Pickable pickable)
+        {
+            if (RadarConfig.HidePickedUntilRespawn != null && !RadarConfig.HidePickedUntilRespawn.Value) return;
+            if (ZNet.instance == null) return;
+            if (!TryGetRespawningRoot(pickable, out GameObject root, out string categoryKey)) return;
+
+            // Same clock and duration Pickable.ShouldRespawn uses.
+            double now = ZNet.instance.GetTimeSeconds();
+            PinManager.MarkPickedAt(categoryKey, root.transform.position, now, RespawnTimerStore.GetRespawnAt(now, pickable.m_respawnTimeMinutes));
+        }
+
+        // The owner says it grew back - show it now rather than waiting for our own timer.
+        private static void ReportRegrown(Pickable pickable)
+        {
+            if (!TryGetRespawningRoot(pickable, out GameObject root, out string categoryKey)) return;
+            PinManager.MarkRegrownAt(categoryKey, root.transform.position);
+        }
+
+        private static bool TryGetRespawningRoot(Pickable pickable, out GameObject root, out string categoryKey)
+        {
+            root = null;
+            categoryKey = null;
+
+            ZNetView netView = pickable.GetComponentInParent<ZNetView>();
+            if (netView == null || !netView.IsValid()) return false;
+
+            root = netView.gameObject;
+            return ObjectEvaluator.TryGetRespawningCategory(root, ScanGeometry.GetRawName(root), out categoryKey);
         }
 
         private static void Guard(Action action)

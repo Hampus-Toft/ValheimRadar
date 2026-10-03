@@ -111,6 +111,34 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Equal(expectedName, ObjectEvaluator.GetResourceDisplayNameOverride(categoryKey, rawName));
         }
 
+        // Pins that drop their name once the icon identifies them: ore deposits and regrowing pickables.
+        [Theory]
+        [InlineData("resource:SilverDeposit", true)]
+        [InlineData("resource:Raspberry", true)]
+        [InlineData("resource:Blueberry", true)]
+        [InlineData("resource:BlueMushroom", true)]
+        [InlineData("resource:Thistle", true)]
+        [InlineData("resource:Magecap", true)]
+        [InlineData("resource:Flint", false)]
+        [InlineData("resource:Beehives", false)]
+        [InlineData("location:Crypt", false)]
+        [InlineData(null, false)]
+        public void HasIconOnlyLabel_OreDepositsAndRegrowingPickables(string categoryKey, bool expected)
+        {
+            Assert.Equal(expected, ObjectEvaluator.HasIconOnlyLabel(categoryKey));
+        }
+
+        // Every regrowing rule (not depletable, not the beehive structure) drops its name.
+        [Fact]
+        public void HasIconOnlyLabel_CoversEveryRegrowingRule()
+        {
+            foreach (var rule in ResourceEvaluator.Rules)
+            {
+                if (rule.Depletable || rule.Id == "Beehives") continue;
+                Assert.True(rule.IconOnlyLabel, rule.Id);
+            }
+        }
+
         [Theory]
         [InlineData("resource:Flint")]
         [InlineData("resource:Raspberry")]
@@ -186,6 +214,27 @@ namespace ValheimRadar.Tests.Scanning
         public void TryGetDepletableCategory_OtherPrefabs_AreIgnored(string nameLower)
         {
             Assert.False(ObjectEvaluator.TryGetDepletableCategory(null, nameLower, out _));
+        }
+
+        [Theory]
+        [InlineData("raspberrybush", "resource:Raspberry")]
+        [InlineData("pickable_mushroom_yellow", "resource:YellowMushroom")]
+        [InlineData("pickable_thistle", "resource:Thistle")]
+        [InlineData("pickable_barley_wild", "resource:Barley")]
+        public void TryGetRespawningCategory_RegrowingPrefabs_ResolveToTheirCategory(string nameLower, string expected)
+        {
+            Assert.True(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out string categoryKey));
+            Assert.Equal(expected, categoryKey);
+        }
+
+        // Depletable resources are removed, not timed; unmatched names aren't resources at all.
+        [Theory]
+        [InlineData("pickable_flint")]
+        [InlineData("rock4_copper")]
+        [InlineData("placeable_stone")]
+        public void TryGetRespawningCategory_OtherPrefabs_AreIgnored(string nameLower)
+        {
+            Assert.False(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out _));
         }
     }
 }
