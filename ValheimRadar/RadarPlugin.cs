@@ -12,11 +12,12 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.11.0";
+        public const string PluginVersion = "1.12.2";
 
-        // How often to flush newly-discovered persistent (resource/structure) pin positions to
-        // disk while connected, so a crash/alt-F4 doesn't lose more than this much progress.
-        private const float PersistSaveInterval = 30f;
+        // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
+        // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
+        // most this much. ClearAllPins also flushes on disconnect.
+        private const float PersistSaveInterval = 2f;
 
         // Troubleshooting only (RadarConfig.DiagnosticLogging): while the large map is open, log the pin-name
         // state a few times per session, never continuously.
@@ -60,8 +61,6 @@ namespace ValheimRadar
         {
             harmony?.UnpatchSelf();
             Config.SettingChanged -= OnConfigurationChanged;
-            PinManager.SaveWorldPins(currentWorldName);
-            PinManager.SaveLocationPins(currentWorldName);
             PinManager.ClearAllPins();
             CreatureScanner.Reset();
             ResourceScanner.Reset();
@@ -108,8 +107,6 @@ namespace ValheimRadar
                 // to become invalid anyway.
                 if (wasActive)
                 {
-                    PinManager.SaveWorldPins(currentWorldName);
-                    PinManager.SaveLocationPins(currentWorldName);
                     PinManager.ClearAllPins();
                     CreatureScanner.Reset();
                     ResourceScanner.Reset();
@@ -124,12 +121,9 @@ namespace ValheimRadar
 
             if (!wasActive)
             {
-                // Freshly connected/reloaded - reload this world's previously discovered
-                // resource/structure points and draw them immediately (rather than waiting for the
-                // first scan tick) so the map doesn't start blank after a relog. Clustering runs
-                // through the exact same RebuildPersistentClusters + SyncPersistentClusters path a
-                // ClusterDistance change uses, so a reloaded pin is never out of step with what the
-                // next real scan would produce.
+                // Freshly connected/reloaded - open this world's saved pins. Locations are drawn right
+                // away; resource points stream in over the next frames, nearest first, through
+                // PinManager.Tick (see PinManager.OpenWorld), so a large save never stalls the connect.
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
                 diagnosticTimer = 0f;
                 diagnosticLogCount = 0;
@@ -137,15 +131,14 @@ namespace ValheimRadar
                 {
                     MinimapMarkerOrder.Apply(Minimap.instance);
                 }
-                PinManager.LoadDismissedPins(currentWorldName);
-                PinManager.LoadRespawnTimers(currentWorldName);
-                PinManager.LoadWorldPins(currentWorldName);
-                PinManager.RebuildPersistentClusters(ClusterDistance);
-                PinManager.SyncPersistentClusters(Minimap.instance);
-                PinManager.LoadLocationPins(currentWorldName);
+                PinManager.OpenWorld(currentWorldName, Player.m_localPlayer.transform.position, ClusterDistance);
                 PinManager.DrawLoadedLocationPins(Minimap.instance);
                 wasActive = true;
             }
+
+            // Loads/reclusters saved points and keeps resource pins in step with the visible map, within a
+            // small per-frame time budget.
+            PinManager.Tick(Minimap.instance, Player.m_localPlayer.transform.position);
 
             timer += Time.deltaTime;
             if (timer >= RadarConfig.UpdateInterval.Value)
@@ -177,8 +170,7 @@ namespace ValheimRadar
             if (saveTimer >= PersistSaveInterval)
             {
                 saveTimer = 0f;
-                PinManager.SaveWorldPins(currentWorldName);
-                PinManager.SaveLocationPins(currentWorldName);
+                PinManager.FlushPersistence();
             }
         }
 
@@ -202,8 +194,8 @@ namespace ValheimRadar
             // explored. New points merge into the durable raw store and are clustered incrementally,
             // so a session's full discovery history never gets reclustered from scratch on a normal
             // tick (a ClusterDistance change is handled separately - see PinManager.RecordRawPoints);
-            // depletable points a verified rescan no longer finds are removed. Pin updates are then
-            // pushed only for whatever clusters actually changed.
+            // depletable points a verified rescan no longer finds are removed. The next PinManager.Tick
+            // pushes pin updates for whatever clusters actually changed.
             float now = Time.time;
             float rescanInterval = RadarConfig.ResourceRescanInterval.Value;
             bool removeDepleted = RadarConfig.RemoveDepletedResources.Value;
@@ -218,7 +210,6 @@ namespace ValheimRadar
 
             // Picked berries/mushrooms/etc. whose respawn time has passed (world time) go back on the map.
             if (ZNet.instance != null) PinManager.UpdateRespawnTimers(ZNet.instance.GetTimeSeconds());
-            PinManager.SyncPersistentClusters(minimap);
         }
     }
 }

@@ -73,6 +73,8 @@ namespace ValheimRadar
 
         public void Clear() => entries.Clear();
 
+        public IEnumerable<Entry> Entries => entries;
+
         // One line per timer (categoryKey|x|y|z|pickedAt|respawnAt), same style as DismissedPinStore.
         public List<string> Serialize()
         {

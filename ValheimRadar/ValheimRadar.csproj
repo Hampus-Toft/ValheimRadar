@@ -71,7 +71,28 @@
     <Reference Include="UnityEngine.UIModule">
       <HintPath>$(ValheimInstallDir)\valheim_Data\Managed\UnityEngine.UIModule.dll</HintPath>
     </Reference>
+    <Reference Include="UnityEngine.UI">
+      <HintPath>$(ValheimInstallDir)\valheim_Data\Managed\UnityEngine.UI.dll</HintPath>
+    </Reference>
   </ItemGroup>
+
+  <!--
+    Native SQLite for the pin database (Persistence/). Only the prebuilt native binaries are used -
+    no managed assets - and they ship next to ValheimRadar.dll, where SqliteNative.Preload loads them:
+    e_sqlite3.dll (Windows x64) and libe_sqlite3.so (Linux x64). SQLite is public domain.
+  -->
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <SqliteNativeFile Include="$(PkgSQLitePCLRaw_lib_e_sqlite3)\runtimes\win-x64\native\e_sqlite3.dll" />
+    <SqliteNativeFile Include="$(PkgSQLitePCLRaw_lib_e_sqlite3)\runtimes\linux-x64\native\libe_sqlite3.so" />
+  </ItemGroup>
+
+  <Target Name="CopySqliteNative" AfterTargets="Build">
+    <Copy SourceFiles="@(SqliteNativeFile)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
 
   <PropertyGroup>
     <!-- Override per-machine with -p:ValheimInstallDir="D:\Games\Valheim" instead of editing this file -->
@@ -90,6 +111,7 @@
 
     <MakeDir Directories="$(ValheimPluginsDir)" Condition="!Exists('$(ValheimPluginsDir)')" />
     <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(ValheimPluginsDir)" SkipUnchangedFiles="false" />
+    <Copy SourceFiles="@(SqliteNativeFile)" DestinationFolder="$(ValheimPluginsDir)" SkipUnchangedFiles="true" ContinueOnError="true" />
 
     <Exec Command="taskkill /F /IM valheim.exe"
           Condition="'$(AutoLaunchValheim)' == 'true'"

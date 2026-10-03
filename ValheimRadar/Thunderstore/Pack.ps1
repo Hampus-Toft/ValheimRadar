@@ -34,6 +34,16 @@ Copy-Item (Join-Path $thunderstoreDir "icon.png") $stagingDir
 Copy-Item (Join-Path $thunderstoreDir "README.md") $stagingDir
 Copy-Item $TargetPath $stagingDir
 
+# Native SQLite for the pin database, copied next to the DLL by the CopySqliteNative target.
+$targetDir = Split-Path $TargetPath -Parent
+foreach ($native in @("e_sqlite3.dll", "libe_sqlite3.so")) {
+    $nativePath = Join-Path $targetDir $native
+    if (-not (Test-Path $nativePath)) {
+        throw "Missing $nativePath - build the project first so CopySqliteNative runs"
+    }
+    Copy-Item $nativePath $stagingDir
+}
+
 $zipName = "$Namespace-$($manifestObj.name)-$version.zip"
 $zipPath = Join-Path $OutDir $zipName
 if (Test-Path $zipPath) {
