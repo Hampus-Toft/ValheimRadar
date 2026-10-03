@@ -93,6 +93,43 @@ namespace ValheimRadar.Tests.Scanning
             }
         }
 
+        // ClusterItems uses a grid + running sums instead of calling AddItem per item; it must still
+        // produce exactly the same clusters, in the same order, with the same members.
+        [Theory]
+        [InlineData(1, 5f)]
+        [InlineData(2, 15f)]
+        [InlineData(3, 1f)]
+        [InlineData(4, 50f)]
+        public void ClusterItems_MatchesAddItemLoop_OnDenseRandomData(int seed, float maxDistance)
+        {
+            var rng = new System.Random(seed);
+            string[] names = { "Stone", "Branch", "Dandelion", null };
+            var items = new List<TrackedItem>();
+            for (int i = 0; i < 3000; i++)
+            {
+                bool deposit = rng.Next(20) == 0;
+                items.Add(new TrackedItem
+                {
+                    DisplayName = deposit ? "Silver" : names[rng.Next(names.Length)],
+                    CategoryKey = deposit ? "resource:SilverDeposit" : null,
+                    Position = new Vector3((float)(rng.NextDouble() * 400 - 200), (float)(rng.NextDouble() * 20), (float)(rng.NextDouble() * 400 - 200))
+                });
+            }
+
+            var expected = new List<ItemCluster>();
+            foreach (var item in items) ClusteringEngine.AddItem(expected, item, maxDistance);
+
+            var actual = ClusteringEngine.ClusterItems(items, maxDistance);
+
+            Assert.Equal(expected.Count, actual.Count);
+            for (int i = 0; i < expected.Count; i++)
+            {
+                Assert.Equal(expected[i].Standalone, actual[i].Standalone);
+                Assert.Equal(expected[i].Items, actual[i].Items);
+                Assert.Equal(expected[i].GetClusterKey(), actual[i].GetClusterKey());
+            }
+        }
+
         [Fact]
         public void AddItem_GreedyInsertionOrder_AssignsToFirstMatchingClusterInListOrder()
         {

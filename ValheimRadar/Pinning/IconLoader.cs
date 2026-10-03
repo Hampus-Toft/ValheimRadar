@@ -25,6 +25,9 @@ namespace ValheimRadar
 
             if (!File.Exists(filePath))
             {
+                // Misses are cached too: most pins have no custom PNG, and loading a world resolves an
+                // icon per saved point (tens of thousands), each probing up to two paths on disk.
+                spriteCache[filePath] = null;
                 return null;
             }
 

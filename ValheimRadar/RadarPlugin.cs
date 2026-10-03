@@ -12,7 +12,7 @@ namespace ValheimRadar
     {
         public const string PluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.12.0";
+        public const string PluginVersion = "1.12.1";
 
         // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
         // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
