@@ -133,6 +133,12 @@ namespace ValheimRadar
         internal void ExecuteAndReset()
         {
             StepToEnd();
+            Reset();
+        }
+
+        // Makes the statement ready to run again with new bindings.
+        internal void Reset()
+        {
             SqliteNative.sqlite3_reset(stmt);
             SqliteNative.sqlite3_clear_bindings(stmt);
         }

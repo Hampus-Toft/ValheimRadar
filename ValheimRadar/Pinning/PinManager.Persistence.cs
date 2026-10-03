@@ -47,10 +47,21 @@ namespace ValheimRadar
 
         private static bool loggedFlushFailure;
 
-        // Loads everything saved for worldName (database first, then any legacy .txt files) into the
-        // in-memory stores. Must run before RebuildPersistentClusters/DrawLoadedLocationPins on connect,
-        // and does not touch the minimap itself - loaded points are drawn through the same path a live
-        // scan uses.
+        // Saved points still to be loaded, one scan cell at a time, nearest to the player last (see
+        // ContinueLoadingPoints), and the save format they were written with.
+        private static readonly List<PointCell> pendingLoadCells = new List<PointCell>();
+        private static int loadingPointsFormat;
+        private static bool pointsFormatSaveQueued;
+        private static int loadedPointCount;
+        private static readonly System.Diagnostics.Stopwatch pointLoadTimer = new System.Diagnostics.Stopwatch();
+
+        // Opens worldName's saved state. Dismissed pins, respawn timers and Locations (small) are loaded
+        // right away; resource points - potentially hundreds of thousands - are loaded over the next
+        // frames by Tick, one scan cell at a time starting nearest to playerPosition, and clustered for
+        // maxDistance as they arrive, so connecting never stalls on them (a 30 s stall gets the client
+        // dropped by a dedicated server). Worlds still saved as v1.11.0-and-older .txt files are imported
+        // once, synchronously, then clustered over the next frames. Doesn't touch the minimap itself -
+        // pins are drawn by Tick.
         //
         // Deliberately does NOT check whether each point's ZDO still exists in ZDOMan (an earlier
         // version did): on a dedicated-server client ZDOMan only holds the sectors streamed so far, so
@@ -58,17 +69,44 @@ namespace ValheimRadar
         // (issue #42), and ZDOIDs are re-assigned whenever a server reloads its world anyway. Pins for
         // objects that no longer exist are the lesser evil next to losing valid ones; see
         // PersistedPointRules.
-        public static void OpenWorld(string worldName)
+        public static void OpenWorld(string worldName, Vector3 playerPosition, float maxDistance)
         {
             CloseWorld();
+            ResetPersistentClusters(Minimap.instance);
             ClearRawPoints();
             rawLocationPoints.Clear();
             dismissedPins.Clear();
             respawnTimers.Clear();
 
+            lastPlayerPosition = playerPosition;
+            clusterGrid = new ClusterGrid(maxDistance);
+            clusteredMaxDistance = maxDistance;
+
             if (string.IsNullOrEmpty(worldName)) return;
 
             database = TryOpenDatabase(worldName);
+
+            if (database != null && !LegacyFilesExist(worldName))
+            {
+                loadingWorld = true;
+                try
+                {
+                    if (!TryLoadDatabase(loadPoints: false, out _))
+                    {
+                        // Never write over a database we couldn't read - it's left as-is for next time.
+                        database.Dispose();
+                        database = null;
+                        return;
+                    }
+                }
+                finally
+                {
+                    loadingWorld = false;
+                }
+
+                StartLoadingPoints();
+                return;
+            }
 
             bool rewritePoints = false, rewriteLocations = false, rewriteDismissed = false, rewriteRespawn = false;
             var importedFiles = new List<string>();
@@ -76,7 +114,7 @@ namespace ValheimRadar
             loadingWorld = true;
             try
             {
-                if (database != null && !TryLoadDatabase(out rewritePoints))
+                if (database != null && !TryLoadDatabase(loadPoints: true, out rewritePoints))
                 {
                     // Never write over a database we couldn't read - it's left as-is for next time.
                     database.Dispose();
@@ -89,6 +127,9 @@ namespace ValheimRadar
             {
                 loadingWorld = false;
             }
+
+            // Everything is in memory now; cluster it over the next frames.
+            RebuildPersistentClusters(maxDistance);
 
             if (database == null) return; // legacy files stay untouched; nothing is saved this session
 
@@ -132,7 +173,7 @@ namespace ValheimRadar
         public static void FlushPersistence()
         {
             if (database == null) return;
-            if (pendingPointSaves.Count == 0 && pendingPointDeletes.Count == 0 && pendingLocationSaves.Count == 0 && !dismissedSaveQueued && !respawnSaveQueued) return;
+            if (pendingPointSaves.Count == 0 && pendingPointDeletes.Count == 0 && pendingLocationSaves.Count == 0 && !dismissedSaveQueued && !respawnSaveQueued && !pointsFormatSaveQueued) return;
 
             try
             {
@@ -143,6 +184,10 @@ namespace ValheimRadar
                     if (pendingLocationSaves.Count > 0) database.UpsertLocations(pendingLocationSaves.Values);
                     if (dismissedSaveQueued) database.ReplaceDismissed(dismissedPins.Entries);
                     if (respawnSaveQueued) database.ReplaceRespawnTimers(respawnTimers.Entries);
+
+                    // Only once every point has been loaded (and so migrated), in the same commit as the
+                    // last migrated rows.
+                    if (pointsFormatSaveQueued) database.SetMeta(PinDatabase.PointsFormatKey, SaveFormatVersion.ToString());
                 });
 
                 ClearPersistenceQueue();
@@ -162,6 +207,8 @@ namespace ValheimRadar
             database?.Dispose();
             database = null;
             ClearPersistenceQueue();
+            pendingLoadCells.Clear();
+            pointLoadTimer.Reset();
         }
 
         private static void QueuePointSave(string key, TrackedItem item)
@@ -201,6 +248,7 @@ namespace ValheimRadar
             pendingLocationSaves.Clear();
             dismissedSaveQueued = false;
             respawnSaveQueued = false;
+            pointsFormatSaveQueued = false;
         }
 
         private static PinDatabase TryOpenDatabase(string worldName)
@@ -220,9 +268,11 @@ namespace ValheimRadar
             }
         }
 
-        // Reads the open database into the in-memory stores. rewritePoints comes back true when loading
-        // changed any point (migration, rename, duplicate dropped), so the points table gets rewritten.
-        private static bool TryLoadDatabase(out bool rewritePoints)
+        // Reads the open database into the in-memory stores - with loadPoints false everything but the
+        // resource points, which StartLoadingPoints then streams in. rewritePoints comes back true when
+        // loading changed any point (migration, rename, duplicate dropped), so the points table gets
+        // rewritten.
+        private static bool TryLoadDatabase(bool loadPoints, out bool rewritePoints)
         {
             rewritePoints = false;
             try
@@ -231,8 +281,12 @@ namespace ValheimRadar
                 foreach (var entry in database.LoadRespawnTimers()) respawnTimers.Add(entry.CategoryKey, entry.Position, entry.PickedAt, entry.RespawnAt);
                 foreach (var loc in database.LoadLocations()) rawLocationPoints["loc:" + loc.LocationKey] = loc;
 
-                int formatVersion = database.GetMetaInt(PinDatabase.PointsFormatKey, SaveFormatVersion);
-                rewritePoints = IngestPoints(database.LoadPoints(), formatVersion);
+                if (loadPoints)
+                {
+                    int formatVersion = database.GetMetaInt(PinDatabase.PointsFormatKey, SaveFormatVersion);
+                    rewritePoints = IngestPoints(database.LoadPoints(), formatVersion);
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -321,66 +375,167 @@ namespace ValheimRadar
         // dropped here and the rewrite heals the save.
         private static bool IngestPoints(List<PointRecord> records, int formatVersion)
         {
-            bool changed = false;
-            int migratedCount = 0;
-            int unmigratableCount = 0;
-
+            bool anyChanged = false;
             foreach (PointRecord record in records)
             {
-                string categoryKey = record.CategoryKey;
-                string displayName = record.DisplayName;
-                if (string.IsNullOrEmpty(displayName)) { changed = true; continue; }
-
-                if (formatVersion < SaveFormatVersion)
-                {
-                    changed = true;
-                    if (!MigrateLegacyCategoryKey(categoryKey, record.RawName, out categoryKey))
-                    {
-                        unmigratableCount++;
-                        continue;
-                    }
-
-                    migratedCount++;
-                }
-
-                // Labels fixed by a rule (e.g. ore deposits, renamed "Silver Deposit" -> "Silver") are
-                // re-derived, so saved points keep deduping against rescanned ones by name.
-                string currentName = ObjectEvaluator.GetResourceDisplayNameOverride(categoryKey, record.RawName);
-                if (!string.IsNullOrEmpty(currentName) && currentName != displayName)
-                {
-                    displayName = currentName;
-                    changed = true;
-                }
-
-                TrackedItem candidate = new TrackedItem
-                {
-                    Zdoid = new ZDOID(record.UserId, record.Id),
-                    Position = record.Position,
-                    DisplayName = displayName,
-                    RawName = record.RawName,
-                    IsPersistent = true,
-                    CategoryKey = categoryKey
-                };
-
-                if (!TryStoreRawPoint(candidate, out string key))
-                {
-                    changed = true;
-                    continue;
-                }
-
-                if (key != record.Key) changed = true;
-
-                string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
-                string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
-                candidate.Icon = string.IsNullOrEmpty(iconPng) ? null : ResolvePerObjectPin(record.RawName, iconPng, vanillaIcon);
+                IngestRecord(record, formatVersion, out bool changed, out _, out _);
+                anyChanged |= changed;
             }
 
-            if (migratedCount > 0 || unmigratableCount > 0)
+            if (formatVersion < SaveFormatVersion)
             {
-                RadarLog.Diag($"[ValheimRadar] pin-save-migrated fromVersion={formatVersion} migrated={migratedCount} dropped={unmigratableCount}");
+                RadarLog.Diag($"[ValheimRadar] pin-save-migrated fromVersion={formatVersion} points={records.Count} kept={rawPersistentPoints.Count}");
             }
 
-            return changed;
+            return anyChanged;
+        }
+
+        // Stores one saved point (see IngestPoints). Returns whether it was stored (as key/item);
+        // changed is true when what's stored differs from the record, including when it wasn't stored.
+        private static bool IngestRecord(PointRecord record, int formatVersion, out bool changed, out string key, out TrackedItem candidate)
+        {
+            key = null;
+            candidate = null;
+            changed = true;
+
+            string categoryKey = record.CategoryKey;
+            string displayName = record.DisplayName;
+            if (string.IsNullOrEmpty(displayName)) return false;
+
+            bool migrated = formatVersion < SaveFormatVersion;
+            if (migrated && !MigrateLegacyCategoryKey(categoryKey, record.RawName, out categoryKey)) return false;
+
+            // Labels fixed by a rule (e.g. ore deposits, renamed "Silver Deposit" -> "Silver") are
+            // re-derived, so saved points keep deduping against rescanned ones by name.
+            string currentName = ObjectEvaluator.GetResourceDisplayNameOverride(categoryKey, record.RawName);
+            bool renamed = !string.IsNullOrEmpty(currentName) && currentName != displayName;
+            if (renamed) displayName = currentName;
+
+            candidate = new TrackedItem
+            {
+                Zdoid = new ZDOID(record.UserId, record.Id),
+                Position = record.Position,
+                DisplayName = displayName,
+                RawName = record.RawName,
+                IsPersistent = true,
+                CategoryKey = categoryKey
+            };
+
+            if (!TryStoreRawPoint(candidate, out key))
+            {
+                candidate = null;
+                key = null;
+                return false;
+            }
+
+            changed = migrated || renamed || key != record.Key;
+
+            string iconPng = ObjectEvaluator.GetDefaultIconForCategory(categoryKey);
+            string vanillaIcon = ObjectEvaluator.GetVanillaIconForCategory(categoryKey);
+            candidate.Icon = string.IsNullOrEmpty(iconPng) ? null : ResolvePerObjectPin(record.RawName, iconPng, vanillaIcon);
+            return true;
+        }
+
+        // --- Streaming the points in ------------------------------------------------------------
+
+        private static bool LegacyFilesExist(string worldName) =>
+            File.Exists(GetSaveFilePath(worldName, LegacyPinFiles.PointsSuffix)) ||
+            File.Exists(GetSaveFilePath(worldName, LegacyPinFiles.LocationsSuffix)) ||
+            File.Exists(GetSaveFilePath(worldName, LegacyPinFiles.DismissedSuffix)) ||
+            File.Exists(GetSaveFilePath(worldName, LegacyPinFiles.RespawnSuffix));
+
+        // Lists the scan cells that have saved points, nearest to the player last, for
+        // ContinueLoadingPoints to work through.
+        private static void StartLoadingPoints()
+        {
+            pendingLoadCells.Clear();
+            loadedPointCount = 0;
+
+            try
+            {
+                loadingPointsFormat = database.GetMetaInt(PinDatabase.PointsFormatKey, SaveFormatVersion);
+                pendingLoadCells.AddRange(database.LoadPointCells());
+            }
+            catch (Exception ex)
+            {
+                Debug.LogError($"[ValheimRadar] Failed to read the pin database (it was left untouched; pins won't be saved this session): {ex.Message}");
+                pendingLoadCells.Clear();
+                database.Dispose();
+                database = null;
+                return;
+            }
+
+            PinViewport.SortNearestLast(pendingLoadCells, c => new Vector3(ScanGeometry.GetCellCenter(c.X), 0f, ScanGeometry.GetCellCenter(c.Z)), lastPlayerPosition);
+            pointLoadTimer.Restart();
+        }
+
+        // Loads saved points, nearest cells first, until this frame's work budget is used up. Each point
+        // goes through the same identity rules as a live scan and joins the clusters immediately.
+        private static void ContinueLoadingPoints()
+        {
+            if (pendingLoadCells.Count == 0 || database == null) return;
+
+            try
+            {
+                while (pendingLoadCells.Count > 0 && WithinBudget(WorkBudgetMs))
+                {
+                    PointCell cell = pendingLoadCells[pendingLoadCells.Count - 1];
+                    pendingLoadCells.RemoveAt(pendingLoadCells.Count - 1);
+
+                    foreach (PointRecord record in database.LoadPointsInCell(cell.X, cell.Z)) IngestLoadedRecord(record);
+                }
+            }
+            catch (Exception ex)
+            {
+                // What's loaded so far stays; only the rest of this session's load is abandoned. Saving
+                // continues - it only ever touches the rows of points that changed.
+                Debug.LogError($"[ValheimRadar] Failed to load saved pins ({pendingLoadCells.Count} map cells not loaded this session): {ex.Message}");
+                pendingLoadCells.Clear();
+                return;
+            }
+
+            if (pendingLoadCells.Count > 0) return;
+
+            pointLoadTimer.Stop();
+            if (loadingPointsFormat < SaveFormatVersion) pointsFormatSaveQueued = true;
+            RadarLog.Diag($"[ValheimRadar] points-loaded count={loadedPointCount} stored={rawPersistentPoints.Count} seconds={pointLoadTimer.Elapsed.TotalSeconds:F1}");
+        }
+
+        private static void IngestLoadedRecord(PointRecord record)
+        {
+            bool stored;
+            bool changed;
+            string key;
+            TrackedItem item;
+
+            loadingWorld = true;
+            try
+            {
+                stored = IngestRecord(record, loadingPointsFormat, out changed, out key, out item);
+            }
+            finally
+            {
+                loadingWorld = false;
+            }
+
+            loadedPointCount++;
+
+            // Fix up the saved row: drop it when the point wasn't kept (invalid, unmigratable, or a
+            // duplicate of one already known), re-save it when it was kept differently. A row whose key
+            // now belongs to another stored point is left for that point's own save to overwrite.
+            if (!stored)
+            {
+                if (!rawPersistentPoints.ContainsKey(record.Key)) QueuePointDelete(record.Key);
+                return;
+            }
+
+            if (changed)
+            {
+                if (key != record.Key && !rawPersistentPoints.ContainsKey(record.Key)) QueuePointDelete(record.Key);
+                QueuePointSave(key, item);
+            }
+
+            if (!IsHidden(item)) AddToClusters(item);
         }
 
         private static IEnumerable<PointRecord> AllPointRecords() => ToRecords(rawPersistentPoints);

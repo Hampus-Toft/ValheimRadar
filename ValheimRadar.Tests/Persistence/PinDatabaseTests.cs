@@ -202,5 +202,104 @@ namespace ValheimRadar.Tests.Persistence
                 Assert.True(read.TotalSeconds < 5, $"read took {read.TotalMilliseconds} ms");
             }
         }
+
+        // Coordinates around zone boundaries, including negative ones, where truncation and floor differ.
+        private static readonly float[] BoundaryCoordinates = { 0f, 31.9f, 32f, -32f, -32.5f, -96f, -96.1f, 95.99f, 1000.25f, -4100.7f };
+
+        [Fact]
+        public void UpsertPoints_StoresEachPointsScanCell()
+        {
+            using (var db = PinDatabase.Open(DbPath))
+            {
+                var points = BoundaryCoordinates.Select((x, i) => Point("1:" + i, x)).ToList();
+                db.InTransaction(() => db.UpsertPoints(points));
+
+                AssertCellsMatchScanGeometry(db, points);
+            }
+        }
+
+        // A v1.12.0 (schema 1) database - no cell columns - is upgraded in place on open: rows kept,
+        // cells filled in exactly as ScanGeometry.GetCellIndex computes them.
+        [Fact]
+        public void Open_MigratesSchema1Database()
+        {
+            var points = BoundaryCoordinates.Select((x, i) => Point("1:" + i, x, name: "Bär " + i)).ToList();
+
+            using (var v1 = SqliteConnection.Open(DbPath))
+            {
+                v1.Execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+                v1.Execute("CREATE TABLE points (key TEXT PRIMARY KEY, user_id INTEGER NOT NULL, zdo_id INTEGER NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, display_name TEXT NOT NULL, raw_name TEXT NOT NULL, category TEXT NOT NULL)");
+                v1.Execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')");
+                v1.Execute("INSERT INTO meta (key, value) VALUES ('points_format', '4')");
+                foreach (var p in points)
+                {
+                    using (var s = v1.Prepare("INSERT INTO points (key, user_id, zdo_id, x, y, z, display_name, raw_name, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
+                    {
+                        s.Bind(1, p.Key).Bind(2, p.UserId).Bind(3, (long)p.Id)
+                            .Bind(4, (double)p.Position.x).Bind(5, (double)p.Position.y).Bind(6, (double)p.Position.z)
+                            .Bind(7, p.DisplayName).Bind(8, p.RawName).Bind(9, p.CategoryKey);
+                        s.ExecuteAndReset();
+                    }
+                }
+            }
+
+            using (var db = PinDatabase.Open(DbPath))
+            {
+                Assert.Equal(PinDatabase.SchemaVersion, db.GetMetaInt("schema_version", -1));
+                Assert.Equal(4, db.GetMetaInt(PinDatabase.PointsFormatKey, -1));
+
+                var loaded = db.LoadPoints().OrderBy(p => p.Key).ToList();
+                Assert.Equal(points.Count, loaded.Count);
+                foreach (var expected in points)
+                {
+                    var actual = loaded.Single(p => p.Key == expected.Key);
+                    Assert.Equal(expected.Position, actual.Position);
+                    Assert.Equal(expected.DisplayName, actual.DisplayName);
+                }
+
+                AssertCellsMatchScanGeometry(db, points);
+            }
+
+            // Reopening an already-migrated file changes nothing.
+            using (var db = PinDatabase.Open(DbPath))
+            {
+                Assert.Equal(PinDatabase.SchemaVersion, db.GetMetaInt("schema_version", -1));
+                Assert.Equal(points.Count, db.LoadPoints().Count);
+            }
+        }
+
+        [Fact]
+        public void LoadPointsInCell_ReturnsOnlyThatCellsPoints_AndCanBeCalledRepeatedly()
+        {
+            using (var db = PinDatabase.Open(DbPath))
+            {
+                db.InTransaction(() => db.UpsertPoints(new[] { Point("1:1", 10f), Point("1:2", 20f), Point("1:3", 200f) }));
+
+                for (int round = 0; round < 3; round++)
+                {
+                    Assert.Equal(new[] { "1:1", "1:2" }, db.LoadPointsInCell(0, 0).Select(p => p.Key).OrderBy(k => k));
+                    Assert.Equal(new[] { "1:3" }, db.LoadPointsInCell(3, -3).Select(p => p.Key));
+                    Assert.Empty(db.LoadPointsInCell(5, 5));
+                }
+
+                var cells = db.LoadPointCells().OrderBy(c => c.X).ToList();
+                Assert.Equal(2, cells.Count);
+                Assert.Equal((0, 0, 2), (cells[0].X, cells[0].Z, cells[0].Count));
+                Assert.Equal((3, -3, 1), (cells[1].X, cells[1].Z, cells[1].Count));
+            }
+        }
+
+        private static void AssertCellsMatchScanGeometry(PinDatabase db, List<PointRecord> points)
+        {
+            var cells = db.LoadPointCells();
+            Assert.Equal(points.Count, cells.Sum(c => c.Count));
+
+            foreach (var p in points)
+            {
+                int cx = ScanGeometry.GetCellIndex(p.Position.x);
+                int cz = ScanGeometry.GetCellIndex(p.Position.z);
+                Assert.Contains(db.LoadPointsInCell(cx, cz), r => r.Key == p.Key);
+            }
+        }
     }
 }

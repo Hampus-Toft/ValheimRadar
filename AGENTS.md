@@ -91,7 +91,10 @@ ValheimRadar/
 │   ├── IconLoader.cs            # PNG-to-Sprite loading (via Jotunn AssetUtils) for user icon overrides
 │   ├── VanillaIconResolver.cs   # Verified vanilla icon sprites (via Jotunn GUIManager) for creatures/resources
 │   ├── PinManager.cs            # Minimap pin sync, updates, removals, and icon resolution order
-│   ├── PinManager.Persistence.cs # Partial: loads/queues/flushes the world database, imports legacy .txt saves
+│   ├── PinManager.Persistence.cs # Partial: streams in/queues/flushes the world database, imports legacy .txt saves
+│   ├── PinManager.Viewport.cs   # Partial: per-frame Tick - budgeted loading/reclustering, resource pins only for the visible map area
+│   ├── PinViewport.cs           # Pure view-rect math for pin virtualization (map UV -> world, margin, reload hysteresis)
+│   ├── MinimapPinBulk.cs        # Removes many minimap pins in one pass (Minimap.RemovePin is a linear List.Remove)
 │   ├── PersistedPointRules.cs   # Pure identity rules for saved raw points (ZDOID key is a hint, position confirms)
 │   ├── DismissedPins.cs         # Pure store + selection logic for pins the player dismissed via right-click
 │   ├── MinimapPatches.cs        # Harmony postfix on Minimap.RemovePin so radar pins can be right-click dismissed
@@ -100,7 +103,7 @@ ValheimRadar/
 │   ├── DepletionRules.cs        # Pure rules for when a rescan's "not found" is conclusive enough to remove a depletable point
 │   └── MinimapMarkerOrder.cs    # Raises the player/ship map markers above all pins (sibling order only)
 ├── Scanning/
-│   ├── ClusteringEngine.cs        # Spatial distance-based point-clustering logic
+│   ├── ClusteringEngine.cs        # Greedy distance-based clustering + ClusterGrid (indexed, incremental, rect queries)
 │   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
 │   ├── NameFormatting.cs          # Shared name/display-text helpers (exact-alias matching, title-casing, prefix stripping)
 │   ├── ScanFilters.cs             # Shared pre-filter (debris names, dungeon-interior objects) applied before any evaluator
@@ -133,7 +136,7 @@ content types behave differently:
 | Type | Scanner | Behavior | Pin store |
 |---|---|---|---|
 | #1 creatures | `CreatureScanner` -> `SpatialCellScanner` | Rotating per-cell cache, re-queried forever; fully reclustered every tick | `PinManager.SyncTransientClusters` - in memory only |
-| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`); regrowing pickables are hidden once picked (`Pickable.SetPicked`, any player) until their `Pickable.m_respawnTimeMinutes` of world time passes or the owner reports them regrown (`RespawnTimerStore`, persisted in the world database) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally, saved to disk |
+| #2 resources, #3 physics-POI | `ResourceScanner`/`PoiScanner` -> `PermanentSpatialScanner` | New cells scanned immediately, re-scanned once inside the loaded area, then every `ResourceRescanInterval` (max 2 cells/tick); depletable points (`Rule.Depletable`) are hidden when the local player mines them (`DepletionPatches`) and removed when verified rescans miss them (`DepletionRules`); regrowing pickables are hidden once picked (`Pickable.SetPicked`, any player) until their `Pickable.m_respawnTimeMinutes` of world time passes or the owner reports them regrown (`RespawnTimerStore`, persisted in the world database) | `rawPersistentPoints` (keyed by ZDOID, bucketed by cell), clustered incrementally in a `ClusterGrid`, saved to disk; only clusters in the visible map area (+ margin) get Minimap pins |
 | #3 Locations (dungeons, altars, ruins...) | `LocationScanner` | Reads `ZoneSystem`, no physics | `rawLocationPoints`, one pin per Location, no clustering, saved to disk |
 
 **State and persistence.** `PinManager` is a static class holding all pin state; its persistence
@@ -145,9 +148,19 @@ our own P/Invoke layer (`Persistence/SqliteNative.cs`); the native `e_sqlite3.dl
 come from the `SQLitePCLRaw.lib.e_sqlite3` NuGet package and must ship next to the plugin DLL (the
 build and `Pack.ps1` copy them). If the library can't load, pins still work but nothing is saved
 that session. The pre-v1.12 `.txt` files are imported once by `OpenWorld` and then deleted
-(`Persistence/LegacyPinFiles.cs`). Every
-`Reset()`/`ClearAllPins()` must run on disconnect so static state never leaks between worlds -
-when adding a new scanner or cache, wire it into both reset sites in `RadarPlugin`.
+(`Persistence/LegacyPinFiles.cs`). Schema changes go through `PinDatabase.Migrate` (in place, one
+transaction, bump `PinDatabase.SchemaVersion`). Every `Reset()`/`ClearAllPins()` must run on
+disconnect so static state never leaks between worlds - when adding a new scanner or cache, wire it
+into both reset sites in `RadarPlugin`.
+
+**Nothing scales with the save size in a single frame.** A world can hold hundreds of thousands of
+points, and a dedicated server drops a client that stalls ~30 s. So `OpenWorld` loads only the
+small tables; resource points stream in per scan cell (`points.cell_x/cell_z`), nearest to the
+player first, and a `ClusterDistance` change reclusters nearest-first too - both inside
+`PinManager.Tick`'s per-frame time budget (`PinManager.Viewport.cs`). Resource pins are virtualized:
+vanilla `Minimap.UpdatePins` walks every pin whenever the map moves, so only clusters inside the
+shown map area plus a margin (`PinViewport`) exist as Minimap pins, added/removed as the map scrolls
+or zooms. Keep new per-point or per-pin work incremental or budgeted the same way.
 
 **`categoryKey` is the join key.** Scanners emit `creature:<id>`, `resource:<id>` (also used by
 `PoiEvaluator` rules) or `location:<canonicalKey>`. Only the key is persisted, so

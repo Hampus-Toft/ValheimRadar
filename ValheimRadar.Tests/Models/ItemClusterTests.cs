@@ -144,8 +144,7 @@ namespace ValheimRadar.Tests.Models
         public void GetClusterKey_AcrossGridBoundary_ProducesDifferentKey()
         {
             // MaxDistance = 10 -> grid cell width 10. x=4 rounds to grid cell 0, x=6 rounds to grid
-            // cell 1 - this boundary is exactly what SyncPersistentClusters' stale-key eviction
-            // depends on to notice a cluster's centroid drifted into a new cell.
+            // cell 1, so transient (creature) clusters either side of it get separate pins.
             var a = new ItemCluster { DisplayName = "Copper", MaxDistance = 10f };
             a.Items.Add(Item(new Vector3(4, 0, 0)));
 
