@@ -272,25 +272,33 @@ namespace ValheimRadar
             RadarLog.Diag($"[ValheimRadar] point-mined name={mined.DisplayName} pos={mined.Position.x:F1},{mined.Position.y:F1},{mined.Position.z:F1}");
         }
 
-        // The local player just picked a regrowing pickable at position (see DepletionPatches) - hide
-        // its recorded point until respawnAt (world time, see RespawnTimerStore), when
-        // UpdateRespawnTimers puts it back on the map. Points not recorded yet are ignored.
-        internal static void MarkPickedAt(string categoryKey, Vector3 position, double pickedAt, double respawnAt)
+        // The recorded point of this category closest to position (the picked object's root), or null.
+        // Already-hidden points are deliberately candidates too: regrowing pickables often grow less
+        // than a metre apart, and skipping a hidden one would hand the pick to its neighbour.
+        private static TrackedItem FindPickedPoint(string categoryKey, Vector3 position)
         {
             var candidates = new List<TrackedItem>();
             var positions = new List<Vector3>();
             foreach (TrackedItem point in RawPointsNear(position, DepletionRules.HitMatchRadius))
             {
-                if (point.CategoryKey != categoryKey || IsHidden(point)) continue;
+                if (point.CategoryKey != categoryKey) continue;
 
                 candidates.Add(point);
                 positions.Add(point.Position);
             }
 
             int index = PinDismissal.IndexOfClosest(positions, position, DepletionRules.HitMatchRadius);
-            if (index < 0) return;
+            return index < 0 ? null : candidates[index];
+        }
 
-            TrackedItem picked = candidates[index];
+        // A regrowing pickable at position was just picked, by anyone (see DepletionPatches) - hide its
+        // recorded point until respawnAt (world time, see RespawnTimerStore), when UpdateRespawnTimers
+        // or MarkRegrownAt puts it back on the map. Points not recorded yet are ignored.
+        internal static void MarkPickedAt(string categoryKey, Vector3 position, double pickedAt, double respawnAt)
+        {
+            TrackedItem picked = FindPickedPoint(categoryKey, position);
+            if (picked == null || IsHidden(picked)) return;
+
             respawnTimers.Add(picked.CategoryKey, picked.Position, pickedAt, respawnAt);
             DetachFromCluster(picked, "picked");
             SaveRespawnTimers();
@@ -312,20 +320,36 @@ namespace ValheimRadar
                 foreach (TrackedItem point in RawPointsNear(entry.Position, RespawnTimerStore.MatchRadius))
                 {
                     if (point.CategoryKey != entry.CategoryKey || DepletionRules.DistanceXZ(point.Position, entry.Position) > RespawnTimerStore.MatchRadius) continue;
-                    if (IsHidden(point)) continue;
-
-                    // No valid clustering yet (a full rebuild is pending) - that rebuild picks the point up.
-                    if (clusteredMaxDistance >= 0f)
-                    {
-                        ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, point, clusteredMaxDistance);
-                        if (!dirtyPersistentClusters.Contains(affected)) dirtyPersistentClusters.Add(affected);
-                    }
-
-                    RadarLog.Diag($"[ValheimRadar] point-respawned name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
+                    ShowRegrownPoint(point);
                 }
             }
 
             SaveRespawnTimers();
+        }
+
+        // The owner reported the pickable at position grew back (Pickable.SetPicked(false)) - show it
+        // now, even if our own timer hasn't run out yet.
+        internal static void MarkRegrownAt(string categoryKey, Vector3 position)
+        {
+            TrackedItem point = FindPickedPoint(categoryKey, position);
+            if (point == null || !respawnTimers.Remove(point.CategoryKey, point.Position)) return;
+
+            ShowRegrownPoint(point);
+            SaveRespawnTimers();
+        }
+
+        private static void ShowRegrownPoint(TrackedItem point)
+        {
+            if (IsHidden(point)) return;
+
+            // No valid clustering yet (a full rebuild is pending) - that rebuild picks the point up.
+            if (clusteredMaxDistance >= 0f)
+            {
+                ItemCluster affected = ClusteringEngine.AddItem(persistentClusters, point, clusteredMaxDistance);
+                if (!dirtyPersistentClusters.Contains(affected)) dirtyPersistentClusters.Add(affected);
+            }
+
+            RadarLog.Diag($"[ValheimRadar] point-respawned name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
         }
 
         // Shows every pickable currently hidden by a respawn timer again (the feature was turned off).
