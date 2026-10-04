@@ -2,7 +2,7 @@
   "name": "ValheimRadar",
   "version_number": "__VERSION__",
   "website_url": "https://github.com/Hampus-Toft/ValheimRadar",
-  "description": "Scans the surrounding area and places clustered minimap pins for nearby creatures, resources, and structures.",
+  "description": "Minimap radar: pins nearby creatures, resources and points of interest (dungeons, altars, ruins...), clustered and remembered per world. Client-side.",
   "dependencies": [
     "ValheimModding-Jotunn-2.30.0"
   ]

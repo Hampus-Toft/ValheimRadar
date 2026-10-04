@@ -13,6 +13,11 @@
       an unfixable version mismatch in a third-party game binary.
     -->
     <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <Authors>Hampus Toft</Authors>
+    <Company>Hampus Toft</Company>
+    <Product>ValheimRadar</Product>
+    <Description>Minimap radar for Valheim: pins nearby creatures, resources and points of interest.</Description>
+    <Copyright>Copyright © Hampus Toft</Copyright>
   </PropertyGroup>
 
   <!--
@@ -80,13 +85,16 @@
     Native SQLite for the pin database (Persistence/). Only the prebuilt native binaries are used -
     no managed assets - and they ship next to ValheimRadar.dll, where SqliteNative.Preload loads them:
     e_sqlite3.dll (Windows x64) and libe_sqlite3.so (Linux x64). SQLite is public domain.
+    The Windows DLL is built from source by Native/Build-ESqlite3.ps1 and committed with its PDB,
+    because mod hosts (Hexium) reject native DLLs without one and the NuGet DLL ships none.
   -->
   <ItemGroup>
     <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.3" GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
-    <SqliteNativeFile Include="$(PkgSQLitePCLRaw_lib_e_sqlite3)\runtimes\win-x64\native\e_sqlite3.dll" />
+    <SqliteNativeFile Include="$(MSBuildThisFileDirectory)Native\win-x64\e_sqlite3.dll" />
+    <SqliteNativeFile Include="$(MSBuildThisFileDirectory)Native\win-x64\e_sqlite3.pdb" />
     <SqliteNativeFile Include="$(PkgSQLitePCLRaw_lib_e_sqlite3)\runtimes\linux-x64\native\libe_sqlite3.so" />
   </ItemGroup>
 

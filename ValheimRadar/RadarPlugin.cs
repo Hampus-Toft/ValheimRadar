@@ -2,6 +2,7 @@ using BepInEx;
 using HarmonyLib;
 using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace ValheimRadar
@@ -10,9 +11,12 @@ namespace ValheimRadar
     [BepInDependency(Jotunn.Main.ModGuid)]
     public class RadarPlugin : BaseUnityPlugin
     {
-        public const string PluginGUID = "com.yourname.valheimradar";
+        // Author "Hampus Toft"; the ID follows the Thunderstore namespace (HampusToft) + package name.
+        public const string PluginGUID = "HampusToft.ValheimRadar";
+        // GUID before v1.12.3 - its .cfg is carried over once by MigrateLegacyConfig.
+        private const string LegacyPluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.12.2";
+        public const string PluginVersion = "1.12.3";
 
         // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
         // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
@@ -37,6 +41,7 @@ namespace ValheimRadar
 
         private void Awake()
         {
+            MigrateLegacyConfig();
             RadarConfig.Initialize(Config);
             Config.SettingChanged += OnConfigurationChanged;
 
@@ -55,6 +60,25 @@ namespace ValheimRadar
             if (harmony != null) DepletionPatches.Apply(harmony);
 
             Logger.LogInfo($"{PluginName} initialized!");
+        }
+
+        // The config file is named after the GUID, so the GUID change would otherwise reset everyone's
+        // settings. Copy the old file over once (it stays in place) and reload before anything is bound.
+        private void MigrateLegacyConfig()
+        {
+            try
+            {
+                string legacyPath = Path.Combine(Paths.ConfigPath, LegacyPluginGUID + ".cfg");
+                if (File.Exists(Config.ConfigFilePath) || !File.Exists(legacyPath)) return;
+
+                File.Copy(legacyPath, Config.ConfigFilePath);
+                Config.Reload();
+                Logger.LogInfo($"Imported settings from {LegacyPluginGUID}.cfg");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning($"Could not import settings from {LegacyPluginGUID}.cfg: {ex.Message}");
+            }
         }
 
         private void OnDestroy()

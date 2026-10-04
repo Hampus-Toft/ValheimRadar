@@ -35,8 +35,9 @@ Copy-Item (Join-Path $thunderstoreDir "README.md") $stagingDir
 Copy-Item $TargetPath $stagingDir
 
 # Native SQLite for the pin database, copied next to the DLL by the CopySqliteNative target.
+# e_sqlite3.pdb must ship next to e_sqlite3.dll: mod hosts (Hexium) reject native DLLs without it.
 $targetDir = Split-Path $TargetPath -Parent
-foreach ($native in @("e_sqlite3.dll", "libe_sqlite3.so")) {
+foreach ($native in @("e_sqlite3.dll", "e_sqlite3.pdb", "libe_sqlite3.so")) {
     $nativePath = Join-Path $targetDir $native
     if (-not (Test-Path $nativePath)) {
         throw "Missing $nativePath - build the project first so CopySqliteNative runs"
