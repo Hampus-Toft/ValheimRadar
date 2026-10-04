@@ -290,7 +290,7 @@ ValheimRadar follows semantic versioning (`MAJOR.MINOR.PATCH`). `PluginVersion` 
 is the **single source of truth** - `Thunderstore/Pack.ps1` reads that constant directly at pack
 time, so there is nowhere else to update by hand (no `manifest.json` version to keep in sync).
 
-**Every version bump also adds a `## X.Y.Z` entry at the top of `Thunderstore/CHANGELOG.md`**
+**Every version bump also adds a `## X.Y.Z - YYYY-MM-DD` entry at the top of `Thunderstore/CHANGELOG.md`**
 (shown on the Thunderstore page; `Pack.ps1` refuses to pack without it). Write it for players, not
 reviewers: what they'll notice, prefixed **Added/Changed/Fixed/Removed**, plus anything they need
 to do (or a note that settings carry over).

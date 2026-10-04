@@ -25,7 +25,7 @@ $manifestObj = $manifestJson | ConvertFrom-Json
 
 # Every published version needs release notes - refuse to pack one that CHANGELOG.md doesn't cover.
 $changelogPath = Join-Path $thunderstoreDir "CHANGELOG.md"
-if (-not (Select-String -Path $changelogPath -Pattern "^## $([regex]::Escape($version))\s*$" -Quiet)) {
+if (-not (Select-String -Path $changelogPath -Pattern "^## $([regex]::Escape($version))(\s|$)" -Quiet)) {
     throw "CHANGELOG.md has no '## $version' entry - add release notes for this version before packing"
 }
 
