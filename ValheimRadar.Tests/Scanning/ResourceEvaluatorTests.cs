@@ -237,24 +237,26 @@ namespace ValheimRadar.Tests.Scanning
             Assert.False(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out _));
         }
     
-        // Every Cultivator sapling grows into one of these rules' Pickable_* prefabs, so they must be
-        // Plantable (skipped on cultivated ground); wild-only flowers and berries must not be.
+        // Exactly the prefabs a Cultivator sapling grows into are ground-checked; the "_wild" barley and
+        // flax (Fuling villages) and wild-only flowers never are, wherever they stand.
         [Theory]
-        [InlineData("CarrotSeed", true)]
-        [InlineData("TurnipSeed", true)]
-        [InlineData("OnionSeed", true)]
-        [InlineData("Barley", true)]
-        [InlineData("Flax", true)]
-        [InlineData("Magecap", true)]
-        [InlineData("Dandelion", false)]
-        [InlineData("Thistle", false)]
-        [InlineData("Raspberry", false)]
-        [InlineData("RedMushroom", false)]
-        public void CultivatorCrops_ArePlantable(string ruleId, bool expected)
+        [InlineData("pickable_onion", true)]
+        [InlineData("pickable_seedonion", true)]
+        [InlineData("pickable_carrot", true)]
+        [InlineData("pickable_seedcarrot", true)]
+        [InlineData("pickable_turnip", true)]
+        [InlineData("pickable_seedturnip", true)]
+        [InlineData("pickable_barley", true)]
+        [InlineData("pickable_flax", true)]
+        [InlineData("pickable_mushroom_magecap", true)]
+        [InlineData("pickable_barley_wild", false)]
+        [InlineData("pickable_flax_wild", false)]
+        [InlineData("pickable_dandelion", false)]
+        [InlineData("pickable_thistle", false)]
+        [InlineData(null, false)]
+        public void IsSaplingGrown_OnlyCultivatorProducts(string nameLower, bool expected)
         {
-            Assert.True(ResourceEvaluator.TryGetRule(ruleId, out var rule));
-            Assert.Equal(expected, rule.Plantable);
-            Assert.Equal(expected, ObjectEvaluator.IsCategoryPlantable($"resource:{ruleId}"));
+            Assert.Equal(expected, ResourceEvaluator.IsSaplingGrown(nameLower));
         }
 }
 }

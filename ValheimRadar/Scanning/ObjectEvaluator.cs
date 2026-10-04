@@ -90,13 +90,6 @@ namespace ValheimRadar
             return false;
         }
 
-        // True for crops the Cultivator can also plant (see ResourceRule.Plantable).
-        public static bool IsCategoryPlantable(string categoryKey)
-        {
-            if (string.IsNullOrEmpty(categoryKey) || !categoryKey.StartsWith("resource:")) return false;
-            return ResourceEvaluator.TryGetRule(categoryKey.Substring("resource:".Length), out var rule) && rule.Plantable;
-        }
-
         // Classifies a live object (e.g. one the player just hit) and returns its categoryKey only
         // if that category is depletable. Resource rules first, then POI rules - the same split the
         // two scanners use.

@@ -6,8 +6,9 @@ under 1.9.1 and 1.12.2.
 ## 1.12.5 - 2026-10-04
 
 - **Fixed:** crops you plant with the Cultivator (carrots, turnips, onions and their seed crops,
-  barley, flax, magecap) are no longer pinned - only wild ones are. Pins already saved for planted
-  crops are removed automatically the next time the area around them is rescanned.
+  barley, flax, magecap) are no longer pinned - only wild ones are, including the barley and flax
+  in Fuling villages. Pins already saved for planted crops are removed automatically the next time
+  the area around them is rescanned.
 
 ## 1.12.4 - 2026-10-04
 

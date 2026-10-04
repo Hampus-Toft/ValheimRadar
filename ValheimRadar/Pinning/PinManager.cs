@@ -145,8 +145,9 @@ namespace ValheimRadar
             RemovePlantedCropPoints(cells);
         }
 
-        // Crop points recorded before planted crops were filtered out (see ResourceRule.Plantable):
-        // drop any plantable-crop point in a verified cell that sits on cultivated ground. A verified
+        // Crop points recorded before planted crops were filtered out (see
+        // ResourceEvaluator.SaplingGrownPrefabs): drop any point of a sapling-grown prefab in a
+        // verified cell that sits on cultivated ground. A verified
         // cell is loaded, so its terrain - and the cultivation paint - is there to check.
         private static void RemovePlantedCropPoints(List<ScannedCell> cells)
         {
@@ -159,7 +160,7 @@ namespace ValheimRadar
 
                 foreach (var kvp in bucket)
                 {
-                    if (!ObjectEvaluator.IsCategoryPlantable(kvp.Value.CategoryKey)) continue;
+                    if (!ResourceEvaluator.IsSaplingGrown(kvp.Value.RawName)) continue;
                     if (!ScanFilters.IsOnCultivatedGround(kvp.Value.Position)) continue;
                     (planted ?? (planted = new List<string>())).Add(kvp.Key);
                 }
