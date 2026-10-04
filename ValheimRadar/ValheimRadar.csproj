@@ -142,7 +142,7 @@
     NuGet packaging target, which would otherwise silently win over ours.)
   -->
   <PropertyGroup>
-    <ThunderstoreNamespace Condition="'$(ThunderstoreNamespace)' == ''">HampusToft</ThunderstoreNamespace>
+    <ThunderstoreNamespace Condition="'$(ThunderstoreNamespace)' == ''">HampusMods</ThunderstoreNamespace>
     <ThunderstoreOutDir>$(MSBuildProjectDirectory)\bin\Thunderstore</ThunderstoreOutDir>
   </PropertyGroup>
 
