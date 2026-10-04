@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Reflection;
 using BepInEx.Configuration;
 
 namespace ValheimRadar
@@ -113,14 +115,14 @@ namespace ValheimRadar
             public ConfigEntry<bool> Enabled;
         }
 
-        private const string SecMeadows = "4 - Creatures (Meadows)";
-        private const string SecBlackForest = "5 - Creatures (Black Forest)";
-        private const string SecSwamp = "6 - Creatures (Swamp)";
-        private const string SecMountain = "7 - Creatures (Mountain)";
-        private const string SecPlains = "8 - Creatures (Plains)";
-        private const string SecMistlands = "9 - Creatures (Mistlands)";
-        private const string SecBosses = "3b - Bosses & Notable Creatures";
-        private const string SecFish = "9b - Creatures (Fish)";
+        private const string SecMeadows = "04 - Creatures (Meadows)";
+        private const string SecBlackForest = "05 - Creatures (Black Forest)";
+        private const string SecSwamp = "06 - Creatures (Swamp)";
+        private const string SecMountain = "07 - Creatures (Mountain)";
+        private const string SecPlains = "08 - Creatures (Plains)";
+        private const string SecMistlands = "09 - Creatures (Mistlands)";
+        private const string SecBosses = "03b - Bosses & Notable Creatures";
+        private const string SecFish = "09b - Creatures (Fish)";
 
         // Section 19 ("Locations (Landmarks)") was removed - the Start Temple and Black Forest
         // Trader are now always shown unconditionally (see LocationDefinition.AlwaysEnabled) rather
@@ -513,43 +515,92 @@ namespace ValheimRadar
         private static ConfigEntry<T> Bind<T>(ConfigFile config, string section, string key, T defaultValue, string description, AcceptableValueBase acceptableValues = null)
         {
             var attrs = new ConfigurationManagerAttributes { Order = _order-- };
-            return config.Bind(section, key, defaultValue, new ConfigDescription(description, acceptableValues, attrs));
+            var entry = config.Bind(section, key, defaultValue, new ConfigDescription(description, acceptableValues, attrs));
+            MigrateLegacySection(config, entry, section, key);
+            return entry;
+        }
+
+        // Section names are zero-padded ("01 - General") because BepInEx writes sections in
+        // ordinal string order, so the old unpadded "10 - ..." sorted before "2 - ...". A value
+        // saved under the old unpadded name is left behind by BepInEx as an orphaned entry; copy
+        // it onto the renamed entry and drop the orphan so the old section disappears from the file.
+        internal static void MigrateLegacySection(ConfigFile config, ConfigEntryBase entry, string section, string key)
+        {
+            string legacySection = GetLegacySectionName(section);
+            if (legacySection == null) return;
+
+            Dictionary<ConfigDefinition, string> orphans = GetOrphanedEntries(config);
+            var legacyDefinition = new ConfigDefinition(legacySection, key);
+            if (orphans == null || !orphans.TryGetValue(legacyDefinition, out string serialized)) return;
+
+            orphans.Remove(legacyDefinition);
+            entry.SetSerializedValue(serialized);
+            config.Save();
+        }
+
+        // "01 - General" -> "1 - General", "03b - Bosses ..." -> "3b - Bosses ...". Null when the
+        // section was never renamed (two-digit numbers were already sorted correctly).
+        internal static string GetLegacySectionName(string section)
+        {
+            if (section == null || section.Length < 2 || section[0] != '0' || !char.IsDigit(section[1])) return null;
+            return section.Substring(1);
+        }
+
+        private static PropertyInfo _orphanedEntriesProperty;
+
+        // ConfigFile.OrphanedEntries is private in BepInEx 5 - holds every key read from the .cfg
+        // that no Bind call has claimed yet.
+        private static Dictionary<ConfigDefinition, string> GetOrphanedEntries(ConfigFile config)
+        {
+            try
+            {
+                if (_orphanedEntriesProperty == null)
+                {
+                    _orphanedEntriesProperty = typeof(ConfigFile).GetProperty("OrphanedEntries", BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+                }
+
+                return _orphanedEntriesProperty?.GetValue(config) as Dictionary<ConfigDefinition, string>;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
         }
 
         public static void Initialize(ConfigFile config)
         {
             _order = 0;
 
-            ScanRadius = Bind(config, "1 - General", "ScanRadius", 100f, "Scan radius around player.", new AcceptableValueRange<float>(10f, 300f));
-            UpdateInterval = Bind(config, "1 - General", "UpdateInterval", 1.0f, "Scan interval in seconds.", new AcceptableValueRange<float>(0.1f, 10f));
-            ClusterDistance = Bind(config, "1 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
-            ScanBatchCount = Bind(config, "1 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
-            LocationScanInterval = Bind(config, "1 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
-            ResourceRescanInterval = Bind(config, "1 - General", "ResourceRescanInterval", 30f, "How often (seconds) already-scanned ground in the loaded area around you is scanned again for resources and physics-detected points of interest. Rescans pick up anything missed the first time and notice resources that are gone (see Remove Depleted Resources). Only a couple of map cells are rescanned per update tick. 0 = never rescan.", new AcceptableValueRange<float>(0f, 600f));
-            RemoveDepletedResources = Bind(config, "1 - General", "Remove Depleted Resources", true, "Remove pins for resources that don't grow back (ore deposits, obsidian, muddy scrap piles, flint, stones, branches, Guck Sacks): immediately when you hit or pick one yourself, and after rescans confirm it's gone when someone else cleared it. Berries, mushrooms, flowers and crops regrow and are never removed (see Hide Picked Until Respawn).");
-            HidePickedUntilRespawn = Bind(config, "1 - General", "Hide Picked Until Respawn", true, "When berries, mushrooms, flowers or crops near you are picked (by you or another player), hide that pin until it grows back (each pickable's own respawn time, in in-game world time) instead of leaving it on the map. Turning this off shows every currently hidden pin again.");
+            ScanRadius = Bind(config, "01 - General", "ScanRadius", 100f, "Scan radius around player.", new AcceptableValueRange<float>(10f, 300f));
+            UpdateInterval = Bind(config, "01 - General", "UpdateInterval", 1.0f, "Scan interval in seconds.", new AcceptableValueRange<float>(0.1f, 10f));
+            ClusterDistance = Bind(config, "01 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
+            ScanBatchCount = Bind(config, "01 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
+            LocationScanInterval = Bind(config, "01 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
+            ResourceRescanInterval = Bind(config, "01 - General", "ResourceRescanInterval", 30f, "How often (seconds) already-scanned ground in the loaded area around you is scanned again for resources and physics-detected points of interest. Rescans pick up anything missed the first time and notice resources that are gone (see Remove Depleted Resources). Only a couple of map cells are rescanned per update tick. 0 = never rescan.", new AcceptableValueRange<float>(0f, 600f));
+            RemoveDepletedResources = Bind(config, "01 - General", "Remove Depleted Resources", true, "Remove pins for resources that don't grow back (ore deposits, obsidian, muddy scrap piles, flint, stones, branches, Guck Sacks): immediately when you hit or pick one yourself, and after rescans confirm it's gone when someone else cleared it. Berries, mushrooms, flowers and crops regrow and are never removed (see Hide Picked Until Respawn).");
+            HidePickedUntilRespawn = Bind(config, "01 - General", "Hide Picked Until Respawn", true, "When berries, mushrooms, flowers or crops near you are picked (by you or another player), hide that pin until it grows back (each pickable's own respawn time, in in-game world time) instead of leaving it on the map. Turning this off shows every currently hidden pin again.");
 
-            EnablePinRemoval = Bind(config, "1 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
-            ClearDismissedPins = Bind(config, "1 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
-            RaisePlayerMarker = Bind(config, "1 - General", "Raise Player Marker", false, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
-            DiagnosticLogging = Bind(config, "1 - General", "Diagnostic Logging", false, "Write verbose troubleshooting lines (pin created/updated/removed, Location scan summaries, pin name state while the large map is open, unmapped Location prefabs) to the BepInEx log. Leave off unless troubleshooting.");
+            EnablePinRemoval = Bind(config, "01 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
+            ClearDismissedPins = Bind(config, "01 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
+            RaisePlayerMarker = Bind(config, "01 - General", "Raise Player Marker", false, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
+            DiagnosticLogging = Bind(config, "01 - General", "Diagnostic Logging", false, "Write verbose troubleshooting lines (pin created/updated/removed, Location scan summaries, pin name state while the large map is open, unmapped Location prefabs) to the BepInEx log. Leave off unless troubleshooting.");
 
-            Group_Creatures = Bind(config, "2 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
-            Group_Berries = Bind(config, "2 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
-            Group_Mushrooms = Bind(config, "2 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
-            Group_FlowersAndCrops = Bind(config, "2 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for wild plants, seeds, and crops.");
-            Group_RocksAndFlint = Bind(config, "2 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
-            Group_Ores = Bind(config, "2 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits (copper, tin, silver, obsidian, iron scrap piles) and harvestable Guck Sacks. Loose ore and ingots lying on the ground are never tracked.");
-            Group_FunctionalStructures = Bind(config, "2 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests (buried and unburied), beehives, and the Bog Witch's camp.");
-            Group_SpawnersAndLandmarks = Bind(config, "2 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile).");
-            Group_BossLocations = Bind(config, "2 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
-            Group_DungeonLocations = Bind(config, "2 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town) plus any unlisted dungeon-plane entrance (Bear Cave, Hildir's Crypt/Cave) caught by the physics-scan fallback.");
-            Group_RunestoneLocations = Bind(config, "2 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations, plus any unlisted/modded runestone caught by the physics-scan fallback.");
-            Group_RuinLocations = Bind(config, "2 - Master Groups", "Enable Ruins & Structures Group", true, "Master toggle for the full ZoneSystem-based ruins/structures roster (ruined houses, stone towers, shipwrecks, Mistlands structures, tar pits, etc.), plus any unlisted/modded ruin caught by the physics-scan fallback. The Start Temple and Black Forest Trader are always shown and have no toggle.");
+            Group_Creatures = Bind(config, "02 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
+            Group_Berries = Bind(config, "02 - Master Groups", "Enable Berries Group", true, "Master toggle for all berry bushes.");
+            Group_Mushrooms = Bind(config, "02 - Master Groups", "Enable Mushrooms Group", true, "Master toggle for all mushroom types.");
+            Group_FlowersAndCrops = Bind(config, "02 - Master Groups", "Enable Flowers and Crops Group", true, "Master toggle for wild plants, seeds, and crops.");
+            Group_RocksAndFlint = Bind(config, "02 - Master Groups", "Enable Ground Pickables Group", true, "Master toggle for loose rocks, flint, wood.");
+            Group_Ores = Bind(config, "02 - Master Groups", "Enable Ores Group", true, "Master toggle for ore deposits (copper, tin, silver, obsidian, iron scrap piles) and harvestable Guck Sacks. Loose ore and ingots lying on the ground are never tracked.");
+            Group_FunctionalStructures = Bind(config, "02 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests (buried and unburied), beehives, and the Bog Witch's camp.");
+            Group_SpawnersAndLandmarks = Bind(config, "02 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile).");
+            Group_BossLocations = Bind(config, "02 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
+            Group_DungeonLocations = Bind(config, "02 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town) plus any unlisted dungeon-plane entrance (Bear Cave, Hildir's Crypt/Cave) caught by the physics-scan fallback.");
+            Group_RunestoneLocations = Bind(config, "02 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations, plus any unlisted/modded runestone caught by the physics-scan fallback.");
+            Group_RuinLocations = Bind(config, "02 - Master Groups", "Enable Ruins & Structures Group", true, "Master toggle for the full ZoneSystem-based ruins/structures roster (ruined houses, stone towers, shipwrecks, Mistlands structures, tar pits, etc.), plus any unlisted/modded ruin caught by the physics-scan fallback. The Start Temple and Black Forest Trader are always shown and have no toggle.");
 
-            EnableMonsters = Bind(config, "3 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
-            EnableAnimals = Bind(config, "3 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
-            ShowCreatureNames = Bind(config, "3 - Creatures (Defaults)", "Show Creature Names", false, "Show the creature's name in its pin label. When off (default), a creature pin whose icon identifies it shows only the count and star rating (a count like '2x' plus one star character per rolled star). Creatures without a specific icon always keep their name.");
+            EnableMonsters = Bind(config, "03 - Creatures (Defaults)", "Hostile Monsters (Unlisted)", true, "Show hostile creatures that have no specific entry in the sections below.");
+            EnableAnimals = Bind(config, "03 - Creatures (Defaults)", "Passive Animals (Unlisted)", true, "Show passive/tameable creatures that have no specific entry in the sections below.");
+            ShowCreatureNames = Bind(config, "03 - Creatures (Defaults)", "Show Creature Names", false, "Show the creature's name in its pin label. When off (default), a creature pin whose icon identifies it shows only the count and star rating (a count like '2x' plus one star character per rolled star). Creatures without a specific icon always keep their name.");
 
             Creatures.Clear();
             foreach (var def in CreatureDefinitions)

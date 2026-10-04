@@ -58,7 +58,8 @@ This document defines operating guidelines, safety boundaries, and workflows for
 - **Clean build:** `dotnet clean && dotnet build -c Release`.
 - **Pack a Thunderstore-importable zip:** `dotnet build -c Release -t:ThunderstorePack`
   from `ValheimRadar/`. Produces a zip under `ValheimRadar/bin/Thunderstore` containing
-  `manifest.json` + `icon.png` + `README.md` + the plugin DLL + the native SQLite libraries, via `Thunderstore/Pack.ps1`.
+  `manifest.json` + `icon.png` + `README.md` + `CHANGELOG.md` + the plugin DLL + the native SQLite libraries, via `Thunderstore/Pack.ps1`.
+  The pack fails if `Thunderstore/CHANGELOG.md` has no `## <PluginVersion>` entry.
   `manifest.json`'s `version_number` is generated from `RadarPlugin.PluginVersion` at pack
   time - never hand-edit a version number in `Thunderstore/manifest.template.json`; bump the
   constant in `RadarPlugin.cs` instead. Override the namespace with
@@ -120,7 +121,7 @@ ValheimRadar/
 ├── docs/
 │   └── ICONS.md                  # Icon resolution order & override naming, for reference when touching Pinning/
 ├── Thunderstore/
-│   └── Pack.ps1, manifest.template.json, README.md, icon.png   # ThunderstorePack packaging assets
+│   └── Pack.ps1, manifest.template.json, README.md, CHANGELOG.md, icon.png   # ThunderstorePack packaging assets
 ├── RadarLog.cs                  # RadarLog.Diag: routine logging, silent unless DiagnosticLogging is on
 └── RadarPlugin.cs               # Plugin lifecycle, update loop, and per-scanner Reset()/scan orchestration
 
@@ -288,6 +289,11 @@ the manual PR checklist.
 ValheimRadar follows semantic versioning (`MAJOR.MINOR.PATCH`). `PluginVersion` in `RadarPlugin.cs`
 is the **single source of truth** - `Thunderstore/Pack.ps1` reads that constant directly at pack
 time, so there is nowhere else to update by hand (no `manifest.json` version to keep in sync).
+
+**Every version bump also adds a `## X.Y.Z - YYYY-MM-DD` entry at the top of `Thunderstore/CHANGELOG.md`**
+(shown on the Thunderstore page; `Pack.ps1` refuses to pack without it). Write it for players, not
+reviewers: what they'll notice, prefixed **Added/Changed/Fixed/Removed**, plus anything they need
+to do (or a note that settings carry over).
 
 **Every change that touches code under `ValheimRadar/` (anything other than a docs-only edit) must
 bump `PluginVersion` as part of the same change.** Bump exactly one segment and follow standard

@@ -16,7 +16,7 @@ namespace ValheimRadar
         // GUID before v1.12.3 - its .cfg is carried over once by MigrateLegacyConfig.
         private const string LegacyPluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.12.3";
+        public const string PluginVersion = "1.12.4";
 
         // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
         // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
