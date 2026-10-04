@@ -144,9 +144,12 @@ half (`Pinning/PinManager.Persistence.cs`) keeps each world in one SQLite file a
 `BepInEx/config/ValheimRadar/PinData/<world>.db` (`Persistence/PinDatabase.cs`: points, locations,
 dismissed pins, respawn timers). Changes are queued and flushed as one small transaction every 2 s
 and on disconnect - never rewrite whole tables from the scan/pin loops. SQLite is called through
-our own P/Invoke layer (`Persistence/SqliteNative.cs`); the native `e_sqlite3.dll`/`libe_sqlite3.so`
-come from the `SQLitePCLRaw.lib.e_sqlite3` NuGet package and must ship next to the plugin DLL (the
-build and `Pack.ps1` copy them). If the library can't load, pins still work but nothing is saved
+our own P/Invoke layer (`Persistence/SqliteNative.cs`); the native libraries must ship next to the
+plugin DLL (the build and `Pack.ps1` copy them). `libe_sqlite3.so` comes from the
+`SQLitePCLRaw.lib.e_sqlite3` NuGet package; `e_sqlite3.dll` + `e_sqlite3.pdb` are built from the
+official SQLite source by `Native/Build-ESqlite3.ps1` and committed under `Native/win-x64/`, because
+mod hosts (Hexium) reject a native DLL without its PDB and the NuGet DLL ships none - to update
+SQLite, bump the pinned version/hash in that script and rerun it. If the library can't load, pins still work but nothing is saved
 that session. The pre-v1.12 `.txt` files are imported once by `OpenWorld` and then deleted
 (`Persistence/LegacyPinFiles.cs`). Schema changes go through `PinDatabase.Migrate` (in place, one
 transaction, bump `PinDatabase.SchemaVersion`). Every `Reset()`/`ClearAllPins()` must run on
