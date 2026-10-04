@@ -30,7 +30,9 @@ namespace ValheimRadar
             // Loose item drops (ore a player dropped, a smelter's ingots, scrap from a mined pile,
             // ...) are never tracked - only world resource nodes are. Checked structurally rather
             // than by name so no alias can ever collide with an item prefab of the same name.
-            if (go.GetComponent<ItemDrop>() != null) return true;
+            // Live fish are the exception: every Fish prefab also carries an ItemDrop (it's what
+            // the player picks up once caught), so this check alone silently dropped all fish.
+            if (go.GetComponent<ItemDrop>() != null && go.GetComponent<Fish>() == null) return true;
 
             if (IsInsideDungeonInterior(go.transform.position)) return true;
 

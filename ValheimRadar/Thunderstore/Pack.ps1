@@ -23,6 +23,12 @@ $templatePath = Join-Path $thunderstoreDir "manifest.template.json"
 $manifestJson = (Get-Content $templatePath -Raw).Replace("__VERSION__", $version)
 $manifestObj = $manifestJson | ConvertFrom-Json
 
+# Every published version needs release notes - refuse to pack one that CHANGELOG.md doesn't cover.
+$changelogPath = Join-Path $thunderstoreDir "CHANGELOG.md"
+if (-not (Select-String -Path $changelogPath -Pattern "^## $([regex]::Escape($version))\s*$" -Quiet)) {
+    throw "CHANGELOG.md has no '## $version' entry - add release notes for this version before packing"
+}
+
 $stagingDir = Join-Path $OutDir "staging"
 if (Test-Path $stagingDir) {
     Remove-Item $stagingDir -Recurse -Force
@@ -32,6 +38,7 @@ New-Item -ItemType Directory -Path $stagingDir | Out-Null
 Set-Content -Path (Join-Path $stagingDir "manifest.json") -Value $manifestJson -NoNewline -Encoding utf8
 Copy-Item (Join-Path $thunderstoreDir "icon.png") $stagingDir
 Copy-Item (Join-Path $thunderstoreDir "README.md") $stagingDir
+Copy-Item $changelogPath $stagingDir
 Copy-Item $TargetPath $stagingDir
 
 # Native SQLite for the pin database, copied next to the DLL by the CopySqliteNative target.
