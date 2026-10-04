@@ -35,8 +35,9 @@ namespace ValheimRadar
             public readonly bool IsMonster;
             public readonly bool DefaultEnabled;
 
-            // Only tameable species (Boar, Wolf, Lox) keep a per-species Min Stars filter - see
-            // CreatureConfigEntry.MinStars. Every other creature still displays its rolled star
+            // Only tameable species (those with a Tameable component in the game: Boar, Wolf, Lox,
+            // Hen, Asksvin, Moose) keep a per-species Min Stars filter and get a Tamed/Wild filter -
+            // see CreatureConfigEntry.MinStars/Tamed. Every other creature still displays its rolled star
             // level in the pin label, but can no longer be filtered by it (a 2-star Greyling is
             // exactly as dangerous/relevant as a 0-star one from a scouting perspective).
             public readonly bool Tameable;
@@ -63,6 +64,22 @@ namespace ValheimRadar
             // a null MinStars as "no filtering" (0), while the rolled star level is still appended
             // to the pin's display name regardless.
             public ConfigEntry<int> MinStars;
+
+            // Tameable species only (null otherwise): show wild ones, tamed ones, or both.
+            public ConfigEntry<TameFilter> Tamed;
+        }
+
+        // Which of a tameable species' creatures get pinned. Spirit-caller summons count as tamed.
+        public enum TameFilter { Both, WildOnly, TamedOnly }
+
+        internal static bool PassesTameFilter(TameFilter filter, bool isTamed)
+        {
+            switch (filter)
+            {
+                case TameFilter.WildOnly: return !isTamed;
+                case TameFilter.TamedOnly: return isTamed;
+                default: return true;
+            }
         }
 
         // World "Location" content (see ZoneSystem.LocationInstance/ZoneLocation, queried via
@@ -123,6 +140,8 @@ namespace ValheimRadar
         private const string SecMistlands = "09 - Creatures (Mistlands)";
         private const string SecBosses = "03b - Bosses & Notable Creatures";
         private const string SecFish = "09b - Creatures (Fish)";
+        private const string SecAshlands = "09c - Creatures (Ashlands)";
+        private const string SecDeepNorth = "09d - Creatures (Deep North)";
 
         // Section 19 ("Locations (Landmarks)") was removed - the Start Temple and Black Forest
         // Trader are now always shown unconditionally (see LocationDefinition.AlwaysEnabled) rather
@@ -140,7 +159,7 @@ namespace ValheimRadar
             // "boar_piggy" is the baby boar (loca "Piggy") that grows into a Boar once tamed and fed -
             // it must share the adult's definition (toggle, star filter, TrophyBoar icon) rather than
             // fall through to the generic bucket, where it has no icon of its own.
-            new CreatureDefinition("boar", new[] { "boar", "boar_piggy" }, "Boar", SecMeadows, isMonster: false, tameable: true),
+            new CreatureDefinition("boar", new[] { "boar", "boar_piggy", "boar_spiritcaller" }, "Boar", SecMeadows, isMonster: false, tameable: true),
             new CreatureDefinition("neck", new[] { "neck" }, "Neck", SecMeadows, isMonster: false),
             new CreatureDefinition("deer", new[] { "deer", "deer_white" }, "Deer", SecMeadows, isMonster: false),
             new CreatureDefinition("greyling", new[] { "greyling" }, "Greyling", SecMeadows, isMonster: true),
@@ -203,6 +222,14 @@ namespace ValheimRadar
             new CreatureDefinition("dvergr", new[] { "dvergr" }, "Dvergr", SecMistlands, isMonster: false),
             new CreatureDefinition("dvergrmage", new[] { "dvergrmage" }, "Dvergr Mage", SecMistlands, isMonster: true),
             new CreatureDefinition("fenring", new[] { "fenring", "fenring_cultist" }, "Fenring", SecMistlands, isMonster: true),
+            // Hatches from a Mistlands egg as "Chicken" and grows into a tameable "Hen". No trophy sprite.
+            new CreatureDefinition("hen", new[] { "hen", "chicken" }, "Hen", SecMistlands, isMonster: false, tameable: true),
+
+            // ASHLANDS
+            new CreatureDefinition("asksvin", new[] { "asksvin", "asksvin_hatchling" }, "Asksvin", SecAshlands, isMonster: true, tameable: true),
+
+            // DEEP NORTH
+            new CreatureDefinition("moose", new[] { "moose", "moose_calf", "moose_spiritcaller" }, "Moose", SecDeepNorth, isMonster: false, tameable: true),
 
             // BOSSES & NOTABLE CREATURES - previously only reachable via the generic hostile
             // fallback (no CreatureDefinitions entry existed for any of these), so individually
@@ -437,7 +464,7 @@ namespace ValheimRadar
         public static ConfigEntry<bool> Group_RuinLocations;
 
         // Creature Filters (fallback used for any creature without a specific entry above). No Min
-        // Stars entries here - only explicitly tameable species (Boar/Wolf/Lox, see
+        // Stars entries here - only tameable species (Boar/Wolf/Lox/Hen/Asksvin/Moose, see
         // CreatureDefinition.Tameable) get a star filter; unlisted monsters/animals never do.
         public static ConfigEntry<bool> EnableMonsters;
         public static ConfigEntry<bool> EnableAnimals;
@@ -611,12 +638,13 @@ namespace ValheimRadar
                     Enabled = Bind(config, def.Section, def.DisplayName, def.DefaultEnabled, $"Show {def.DisplayName}.")
                 };
 
-                // Only tameable species (Boar/Wolf/Lox) get a star filter - every other creature
+                // Only tameable species get a star filter and a tamed/wild filter - every other creature
                 // still shows its rolled star level in the pin label (see CreatureEvaluator), it just
                 // can't be filtered out by it anymore.
                 if (def.Tameable)
                 {
                     entry.MinStars = Bind(config, def.Section, $"{def.DisplayName} - Min Stars", 0, $"Minimum star level for {def.DisplayName} (0 = All, requires the toggle above to also be on).", new AcceptableValueRange<int>(0, 3));
+                    entry.Tamed = Bind(config, def.Section, $"{def.DisplayName} - Tamed or Wild", TameFilter.Both, $"Which {def.DisplayName} to show: Both, WildOnly (not tamed) or TamedOnly (tamed, including summoned ones). Requires the toggle above to also be on.");
                 }
 
                 Creatures[def.CanonicalKey] = entry;

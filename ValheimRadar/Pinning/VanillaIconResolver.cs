@@ -113,12 +113,10 @@ namespace ValheimRadar
             ["charred_archer"] = "TrophyCharredArcher",
             ["charred_mage"] = "TrophyCharredMage",
 
-            // Tameable species with no dedicated RadarConfig.CreatureDefinitions entry - keyed by raw
-            // lowercased prefab name so they resolve through the generic hostile/passive buckets (see
-            // TryResolveIcon's cleaned-name fallback). Each baby prefab (Growup -> adult, per the
-            // game's own prefabs) deliberately maps to the same sprite as its adult so a juvenile
-            // never shows up icon-less: Asksvin_hatchling -> Asksvin, Moose_calf -> Moose. Hen/Chicken
-            // have no trophy sprite at all, so they stay on the category default.
+            // Asksvin and Moose (canonical keys of their CreatureDefinitions). The baby prefab keys
+            // (Growup -> adult) are kept for the cleaned-name fallback, mapped to the adult's sprite so a
+            // juvenile never shows up icon-less. Hen/Chicken have no trophy sprite at all, so they stay
+            // on the category default.
             ["asksvin"] = "TrophyAsksvin",
             ["asksvin_hatchling"] = "TrophyAsksvin",
             ["moose"] = "TrophyMoose",

@@ -10,7 +10,7 @@ count (e.g. `5x Copper`).
 
 | Kind | Examples | How it behaves |
 |---|---|---|
-| **Creatures** | Every vanilla creature and boss, grouped by biome; fish; the Leviathan | Live pins that follow the creatures and disappear when they leave the scan radius. Each creature has its own toggle and a minimum star level (e.g. only 2-star Wolves). |
+| **Creatures** | Every vanilla creature and boss, grouped by biome; fish; the Leviathan | Live pins that follow the creatures and disappear when they leave the scan radius. Each creature has its own toggle; tameable ones (Boar, Wolf, Lox, Hen, Asksvin, Moose) also have a minimum star level and a tamed/wild filter (e.g. only wild 2-star Wolves, or only your own tamed ones). |
 | **Resources** | Copper, tin, silver, obsidian, muddy scrap piles, Guck Sacks; berries; mushrooms; Dandelion, Thistle, Magecap and wild crops; flint, stones, branches | Remembered for the world once found, so they're back on the map the next time you log in. |
 | **Points of interest** | Dungeon and cave entrances, boss altars, runestones, ruins and towers, shipwrecks, tar pits, Greydwarf nests, body/bone piles, chests (above-ground and buried), wild beehives, the Bog Witch, Haldor and the Start Temple | Read directly from Valheim's world data, so they appear as soon as their area is generated. One pin each, remembered for the world. |
 
@@ -53,7 +53,7 @@ immediately. Settings from older versions (`com.yourname.valheimradar.cfg`) are 
 |---|---|
 | General | Scan radius (default 100 m), scan interval, cluster distance, rescan interval, removing mined-out resources, hiding picked plants, right-click dismissal, drawing your own marker above the pins, diagnostic logging |
 | Master Groups | One switch per group: creatures, berries, mushrooms, plants & crops, ground pickables, ores, functional structures, spawners, boss altars, dungeons, runestones, ruins |
-| Creatures | Per-creature toggles and minimum star level, by biome; whether creature pins show names (off by default - the icon already says what it is) |
+| Creatures | Per-creature toggles by biome, plus minimum star level and tamed/wild filter for tameable species; whether creature pins show names (off by default - the icon already says what it is) |
 | Resources / Structures / Locations | A toggle for each individual resource and point of interest |
 
 ### Custom icons
