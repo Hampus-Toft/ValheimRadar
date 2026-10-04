@@ -3,6 +3,12 @@
 Versions 1.9.0, 1.12.0 and 1.12.1 were never released on their own; their changes are listed
 under 1.9.1 and 1.12.2.
 
+## 1.12.5 - 2026-10-04
+
+- **Fixed:** crops you plant with the Cultivator (carrots, turnips, onions and their seed crops,
+  barley, flax, magecap) are no longer pinned - only wild ones are. Pins already saved for planted
+  crops are removed automatically the next time the area around them is rescanned.
+
 ## 1.12.4 - 2026-10-04
 
 - **Fixed:** fish are pinned on the map again. They had stopped showing up in 1.10.0, when loose

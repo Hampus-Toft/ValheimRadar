@@ -142,6 +142,43 @@ namespace ValheimRadar
             RecordRawPoints(found, maxDistance);
 
             if (removeDepleted) RemoveMissingDepletedPoints(cells, now);
+            RemovePlantedCropPoints(cells);
+        }
+
+        // Crop points recorded before planted crops were filtered out (see ResourceRule.Plantable):
+        // drop any plantable-crop point in a verified cell that sits on cultivated ground. A verified
+        // cell is loaded, so its terrain - and the cultivation paint - is there to check.
+        private static void RemovePlantedCropPoints(List<ScannedCell> cells)
+        {
+            List<string> planted = null;
+
+            foreach (var cell in cells)
+            {
+                if (!cell.Verified) continue;
+                if (!rawPointsByCell.TryGetValue(cell.Key, out var bucket)) continue;
+
+                foreach (var kvp in bucket)
+                {
+                    if (!ObjectEvaluator.IsCategoryPlantable(kvp.Value.CategoryKey)) continue;
+                    if (!ScanFilters.IsOnCultivatedGround(kvp.Value.Position)) continue;
+                    (planted ?? (planted = new List<string>())).Add(kvp.Key);
+                }
+            }
+
+            if (planted == null) return;
+
+            bool dismissalsChanged = false;
+            foreach (string key in planted)
+            {
+                TrackedItem point = rawPersistentPoints[key];
+                RemoveRawPoint(key);
+                DetachFromCluster(point, "planted");
+                dismissalsChanged |= dismissedPins.Remove(point.CategoryKey, point.Position);
+
+                RadarLog.Diag($"[ValheimRadar] point-planted key={key} name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
+            }
+
+            if (dismissalsChanged) QueueDismissedSave();
         }
 
         private static void RemoveMissingDepletedPoints(List<ScannedCell> cells, float now)

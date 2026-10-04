@@ -236,5 +236,25 @@ namespace ValheimRadar.Tests.Scanning
         {
             Assert.False(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out _));
         }
-    }
+    
+        // Every Cultivator sapling grows into one of these rules' Pickable_* prefabs, so they must be
+        // Plantable (skipped on cultivated ground); wild-only flowers and berries must not be.
+        [Theory]
+        [InlineData("CarrotSeed", true)]
+        [InlineData("TurnipSeed", true)]
+        [InlineData("OnionSeed", true)]
+        [InlineData("Barley", true)]
+        [InlineData("Flax", true)]
+        [InlineData("Magecap", true)]
+        [InlineData("Dandelion", false)]
+        [InlineData("Thistle", false)]
+        [InlineData("Raspberry", false)]
+        [InlineData("RedMushroom", false)]
+        public void CultivatorCrops_ArePlantable(string ruleId, bool expected)
+        {
+            Assert.True(ResourceEvaluator.TryGetRule(ruleId, out var rule));
+            Assert.Equal(expected, rule.Plantable);
+            Assert.Equal(expected, ObjectEvaluator.IsCategoryPlantable($"resource:{ruleId}"));
+        }
+}
 }
