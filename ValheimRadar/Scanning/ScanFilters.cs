@@ -39,6 +39,14 @@ namespace ValheimRadar
             return false;
         }
 
+        // Player farms: every Cultivator crop can only be planted on cultivated ground, and wild ones
+        // never spawn there (see ResourceEvaluator.SaplingGrownPrefabs). False when the terrain isn't loaded.
+        internal static bool IsOnCultivatedGround(Vector3 position)
+        {
+            Heightmap heightmap = Heightmap.FindHeightmap(position);
+            return heightmap != null && heightmap.IsCultivated(position);
+        }
+
         // Name-only half of ShouldReject, split out so it can be unit tested without a live
         // GameObject/ZoneSystem.
         internal static bool IsDebrisName(string nameLower) => NameFormatting.ContainsAny(nameLower, DebrisNameMarkers);

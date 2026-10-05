@@ -236,5 +236,27 @@ namespace ValheimRadar.Tests.Scanning
         {
             Assert.False(ObjectEvaluator.TryGetRespawningCategory(null, nameLower, out _));
         }
-    }
+    
+        // Exactly the prefabs a Cultivator sapling grows into are ground-checked; the "_wild" barley and
+        // flax (Fuling villages) and wild-only flowers never are, wherever they stand.
+        [Theory]
+        [InlineData("pickable_onion", true)]
+        [InlineData("pickable_seedonion", true)]
+        [InlineData("pickable_carrot", true)]
+        [InlineData("pickable_seedcarrot", true)]
+        [InlineData("pickable_turnip", true)]
+        [InlineData("pickable_seedturnip", true)]
+        [InlineData("pickable_barley", true)]
+        [InlineData("pickable_flax", true)]
+        [InlineData("pickable_mushroom_magecap", true)]
+        [InlineData("pickable_barley_wild", false)]
+        [InlineData("pickable_flax_wild", false)]
+        [InlineData("pickable_dandelion", false)]
+        [InlineData("pickable_thistle", false)]
+        [InlineData(null, false)]
+        public void IsSaplingGrown_OnlyCultivatorProducts(string nameLower, bool expected)
+        {
+            Assert.Equal(expected, ResourceEvaluator.IsSaplingGrown(nameLower));
+        }
+}
 }

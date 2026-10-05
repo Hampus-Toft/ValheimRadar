@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace ValheimRadar
@@ -84,11 +85,8 @@ namespace ValheimRadar
             new ResourceRule("BlueMushroom", () => RadarConfig.Group_Mushrooms.Value && RadarConfig.TrackBlueMushroom.Value, (go, n) => IsExactAlias(n, "pickable_mushroom_blue"), "mushroom.png", "mushroomblue", iconOnlyLabel: true),
 
             // FLOWERS & CROPS. Dandelion/Thistle are wild-only. Carrot/Turnip/Onion/Barley/Flax/
-            // Magecap are ALSO plantable via the Cultivator, but confirmed as genuinely separate
-            // prefabs from their wild Pickable_* counterparts - the planted piece is a Plant+Piece
-            // "sapling_*" object that is harvested in place and never spawns a Pickable_*
-            // GameObject - so matching only the Pickable_* names below permanently excludes
-            // anything player-planted.
+            // Magecap are ALSO plantable via the Cultivator: a grown sapling is replaced by some of the
+            // very same Pickable_* prefabs matched below (Plant.Grow) - see SaplingGrownPrefabs.
             new ResourceRule("Dandelion", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackDandelion.Value, (go, n) => IsExactAlias(n, "pickable_dandelion"), "crop.png", "dandelion", iconOnlyLabel: true),
             new ResourceRule("Thistle", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackThistle.Value, (go, n) => IsExactAlias(n, "pickable_thistle"), "crop.png", "thistle", iconOnlyLabel: true),
             new ResourceRule("CarrotSeed", () => RadarConfig.Group_FlowersAndCrops.Value && RadarConfig.TrackCarrotSeed.Value, (go, n) => IsExactAlias(n, "pickable_carrot", "pickable_seedcarrot"), "crop.png", "carrotseeds", iconOnlyLabel: true),
@@ -149,7 +147,7 @@ namespace ValheimRadar
 
             foreach (var rule in Rules)
             {
-                if (!rule.Matches(go, nameLower)) continue;
+                if (!MatchesWild(rule, go, nameLower)) continue;
 
                 displayName = rule.DisplayNameOverride != null ? rule.DisplayNameOverride(nameLower) : NameFormatting.DeriveDisplayName(go, null);
                 icon = PinManager.ResolvePerObjectPin(nameLower, rule.IconPng, rule.VanillaIcon);
@@ -165,13 +163,38 @@ namespace ValheimRadar
         {
             foreach (var r in Rules)
             {
-                if (!r.Matches(go, nameLower)) continue;
+                if (!MatchesWild(r, go, nameLower)) continue;
                 rule = r;
                 return true;
             }
 
             rule = null;
             return false;
+        }
+
+        // Every Pickable_* prefab a Cultivator sapling grows into (Plant.m_grownPrefabs, read from the
+        // game's asset bundles: sapling_onion -> Pickable_Onion, sapling_seedonion -> Pickable_SeedOnion,
+        // sapling_magecap -> Pickable_Mushroom_Magecap, ...), limited to ones a rule above matches.
+        // Saplings can only be planted on cultivated ground (Piece.m_cultivatedGroundOnly), so one of
+        // these on cultivated ground is a player's farm. The "_wild" barley/flax variants are never
+        // grown from a sapling and stay pinned wherever they are - Fuling village fields included.
+        private static readonly HashSet<string> SaplingGrownPrefabs = new HashSet<string>
+        {
+            "pickable_carrot", "pickable_seedcarrot",
+            "pickable_turnip", "pickable_seedturnip",
+            "pickable_onion", "pickable_seedonion",
+            "pickable_barley", "pickable_flax",
+            "pickable_mushroom_magecap",
+        };
+
+        internal static bool IsSaplingGrown(string nameLower) => nameLower != null && SaplingGrownPrefabs.Contains(nameLower);
+
+        // A rule's own match, minus player-planted crops (see SaplingGrownPrefabs). Name-only lookups
+        // (no GameObject) have no ground to check and keep the plain name match.
+        private static bool MatchesWild(ResourceRule rule, GameObject go, string nameLower)
+        {
+            if (!rule.Matches(go, nameLower)) return false;
+            return go == null || !IsSaplingGrown(nameLower) || !ScanFilters.IsOnCultivatedGround(go.transform.position);
         }
 
         internal static bool TryGetRule(string id, out ResourceRule rule)
