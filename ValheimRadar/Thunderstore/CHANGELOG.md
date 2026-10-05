@@ -3,6 +3,16 @@
 Versions 1.9.0, 1.12.0 and 1.12.1 were never released on their own; their changes are listed
 under 1.9.1 and 1.12.2.
 
+## 1.13.0 - 2026-10-04
+
+- **Added:** a **Tamed or Wild** setting for every tameable creature - show both (default, same as
+  before), only wild ones, or only tamed ones (summoned spirit-caller animals count as tamed). E.g.
+  pin only wild Wolves to hunt, or only your own Lox.
+- **Added:** Hen, Asksvin and Moose now have their own toggles, star filter and tamed/wild filter
+  (they were only covered by "Passive Animals (Unlisted)" before), in the Mistlands section and the
+  new `09c - Creatures (Ashlands)` and `09d - Creatures (Deep North)` sections. Chickens, Asksvin
+  hatchlings and Moose calves count as their species.
+
 ## 1.12.5 - 2026-10-04
 
 - **Fixed:** crops you plant with the Cultivator (carrots, turnips, onions and their seed crops,

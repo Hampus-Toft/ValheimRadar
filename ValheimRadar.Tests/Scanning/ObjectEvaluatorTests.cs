@@ -340,5 +340,48 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Equal("bonemass", matchedKey);
             Assert.NotNull(entry);
         }
-    }
+    
+        [Theory]
+        [InlineData(RadarConfig.TameFilter.Both, false, true)]
+        [InlineData(RadarConfig.TameFilter.Both, true, true)]
+        [InlineData(RadarConfig.TameFilter.WildOnly, false, true)]
+        [InlineData(RadarConfig.TameFilter.WildOnly, true, false)]
+        [InlineData(RadarConfig.TameFilter.TamedOnly, false, false)]
+        [InlineData(RadarConfig.TameFilter.TamedOnly, true, true)]
+        public void PassesTameFilter_MatchesSetting(RadarConfig.TameFilter filter, bool isTamed, bool expected)
+        {
+            Assert.Equal(expected, RadarConfig.PassesTameFilter(filter, isTamed));
+        }
+
+        // Every species with a Tameable component in the game gets a tamed/wild filter (default Both,
+        // so existing behaviour is unchanged); non-tameable creatures get none.
+        [Theory]
+        [InlineData("boar", true)]
+        [InlineData("wolf", true)]
+        [InlineData("lox", true)]
+        [InlineData("hen", true)]
+        [InlineData("asksvin", true)]
+        [InlineData("moose", true)]
+        [InlineData("deer", false)]
+        [InlineData("bear", false)]
+        public void TameableSpecies_HaveTamedFilter(string canonicalKey, bool expected)
+        {
+            Assert.True(RadarConfig.Creatures.TryGetValue(canonicalKey, out var entry));
+            Assert.Equal(expected, entry.Tamed != null);
+            if (expected) Assert.Equal(RadarConfig.TameFilter.Both, entry.Tamed.Value);
+        }
+
+        [Theory]
+        [InlineData("chicken", "hen")]
+        [InlineData("asksvin_hatchling", "asksvin")]
+        [InlineData("moose_calf", "moose")]
+        [InlineData("moose_spiritcaller", "moose")]
+        [InlineData("boar_spiritcaller", "boar")]
+        [InlineData("wolf_spiritcaller", "wolf")]
+        public void TameableVariants_ResolveToTheirSpecies(string nameLower, string canonicalKey)
+        {
+            Assert.True(RadarConfig.AliasLookup.TryGetValue(nameLower, out var def));
+            Assert.Equal(canonicalKey, def.CanonicalKey);
+        }
+}
 }

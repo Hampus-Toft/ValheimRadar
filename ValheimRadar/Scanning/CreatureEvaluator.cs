@@ -66,7 +66,7 @@ namespace ValheimRadar
             {
                 enabled = specific.Enabled.Value;
                 // Null for every non-tameable species (see CreatureDefinition.Tameable) - only
-                // Boar/Wolf/Lox get a star filter, everyone else is unfiltered (0) but still shows
+                // tameable species get a star filter, everyone else is unfiltered (0) but still shows
                 // its rolled star level in the display name below.
                 minStars = specific.MinStars?.Value ?? 0;
                 isMonsterIcon = specific.IsMonster;
@@ -92,6 +92,7 @@ namespace ValheimRadar
             }
 
             if (!enabled || starLevel < minStars) return false;
+            if (specific?.Tamed != null && !RadarConfig.PassesTameFilter(specific.Tamed.Value, character.IsTamed())) return false;
 
             if (starLevel > 0) displayName += $" ({new string('★', starLevel)})";
 
