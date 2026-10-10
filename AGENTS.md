@@ -98,7 +98,7 @@ ValheimRadar/
 │   ├── MinimapPinBulk.cs        # Removes many minimap pins in one pass (Minimap.RemovePin is a linear List.Remove)
 │   ├── PersistedPointRules.cs   # Pure identity rules for saved raw points (ZDOID key is a hint, position confirms)
 │   ├── DismissedPins.cs         # Pure store + selection logic for pins the player dismissed via right-click
-│   ├── MinimapPatches.cs        # Harmony postfix on Minimap.RemovePin so radar pins can be right-click dismissed
+│   ├── MinimapPatches.cs        # Harmony postfixes on Minimap.RemovePin/OnMapLeftClick: right-click dismisses, left-click crosses out radar pins
 │   ├── DepletionPatches.cs      # Harmony hooks (Destructible/MineRock/MineRock5.Damage, Pickable.Interact): hide a depletable pin on the local player's first effective hit/pick; Pickable.SetPicked hides a regrowing pickable's pin until it respawns
 │   ├── RespawnTimers.cs         # Pure store of picked regrowing pickables (berries/mushrooms/crops) hidden until their respawn world time
 │   ├── DepletionRules.cs        # Pure rules for when a rescan's "not found" is conclusive enough to remove a depletable point
@@ -143,7 +143,7 @@ content types behave differently:
 **State and persistence.** `PinManager` is a static class holding all pin state; its persistence
 half (`Pinning/PinManager.Persistence.cs`) keeps each world in one SQLite file at
 `BepInEx/config/ValheimRadar/PinData/<world>.db` (`Persistence/PinDatabase.cs`: points, locations,
-dismissed pins, respawn timers). Changes are queued and flushed as one small transaction every 2 s
+dismissed pins, crossed-out pins, respawn timers). Changes are queued and flushed as one small transaction every 2 s
 and on disconnect - never rewrite whole tables from the scan/pin loops. SQLite is called through
 our own P/Invoke layer (`Persistence/SqliteNative.cs`); the native libraries must ship next to the
 plugin DLL (the build and `Pack.ps1` copy them). `libe_sqlite3.so` comes from the

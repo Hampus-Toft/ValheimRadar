@@ -27,7 +27,7 @@ namespace ValheimRadar
 
             if (go.GetComponent<Fish>() != null)
             {
-                return TryClassifyAliasOnly(nameLower, "animal.png", out displayName, out icon, out categoryKey);
+                return TryClassifyFish(go, nameLower, out displayName, out icon, out categoryKey);
             }
 
             // LEVIATHAN - the giant ocean turtle-shell structure players commonly call a "kraken"
@@ -103,6 +103,26 @@ namespace ValheimRadar
             string vanillaIcon = specificKey != null ? VanillaIconResolver.GetCreatureTrophySprite(specificKey) : null;
             icon = PinManager.ResolvePerObjectPin(nameLower, isMonsterIcon ? "monster.png" : "animal.png", vanillaIcon);
             categoryKey = candidateCategoryKey;
+            return true;
+        }
+
+        // FISH - every live fish also carries the ItemDrop it becomes once caught, whose item quality
+        // (1-5, synced through the ZDO) is the fish's rarity. Filtered per quality level, and shown in the
+        // label as a " (Q3)" suffix - so fish of different quality also land in separate pins.
+        private static bool TryClassifyFish(GameObject go, string nameLower, out string displayName, out Sprite icon, out string categoryKey)
+        {
+            ItemDrop itemDrop = go.GetComponent<ItemDrop>();
+            int quality = RadarConfig.ClampFishQuality(itemDrop != null && itemDrop.m_itemData != null ? itemDrop.m_itemData.m_quality : 1);
+
+            if (!RadarConfig.IsFishQualityShown(quality) || !TryClassifyAliasOnly(nameLower, "animal.png", out displayName, out icon, out categoryKey))
+            {
+                displayName = string.Empty;
+                icon = null;
+                categoryKey = null;
+                return false;
+            }
+
+            displayName += ItemCluster.FishQualitySuffix(quality);
             return true;
         }
 

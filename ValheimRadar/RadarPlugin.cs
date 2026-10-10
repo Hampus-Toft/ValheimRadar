@@ -16,7 +16,7 @@ namespace ValheimRadar
         // GUID before v1.12.3 - its .cfg is carried over once by MigrateLegacyConfig.
         private const string LegacyPluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.13.0";
+        public const string PluginVersion = "1.14.0";
 
         // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
         // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
@@ -38,6 +38,7 @@ namespace ValheimRadar
         private Harmony harmony;
 
         private static float ClusterDistance => RadarConfig.ClusterDistance != null ? RadarConfig.ClusterDistance.Value : 15.0f;
+        private static float CreatureClusterDistance => RadarConfig.CreatureClusterDistance != null ? RadarConfig.CreatureClusterDistance.Value : 15.0f;
 
         private void Awake()
         {
@@ -52,8 +53,8 @@ namespace ValheimRadar
             }
             catch (Exception ex)
             {
-                // Only manual pin removal depends on the patch - the rest of the plugin works without it.
-                Logger.LogError($"Failed to apply Minimap patches (right-click pin removal disabled): {ex}");
+                // Only manual pin removal/cross-out depend on these patches - the rest of the plugin works without them.
+                Logger.LogError($"Failed to apply Minimap patches (right-click pin removal and left-click cross-out disabled): {ex}");
             }
 
             // Guards each target itself - see DepletionPatches.Patch.
@@ -177,6 +178,10 @@ namespace ValheimRadar
                 locationTimer = 0f;
                 List<TrackedLocation> newLocations = LocationScanner.ScanLocations();
                 if (newLocations.Count > 0) PinManager.RecordAndSyncLocations(Minimap.instance, newLocations);
+
+                // Re-tags Mountain Caves whose (loaded) interior has a Tetra pond - see LocationScanner.FindTetraPondDungeons.
+                List<Vector3> pondDungeons = LocationScanner.FindTetraPondDungeons();
+                if (pondDungeons.Count > 0) PinManager.MarkTetraPondCaves(Minimap.instance, pondDungeons);
             }
 
             if (Minimap.instance.m_mode == Minimap.MapMode.Large && (RadarConfig.DiagnosticLogging == null || RadarConfig.DiagnosticLogging.Value))
@@ -209,7 +214,7 @@ namespace ValheimRadar
             // only ever touches this tick's in-range detections though - bounded by ScanRadius, not
             // any ever-growing discovery history - so redoing it in full each tick stays cheap.
             List<TrackedItem> creatures = CreatureScanner.ScanBatch(playerPos, scanRadius, RadarConfig.ScanBatchCount.Value);
-            List<ItemCluster> creatureClusters = ClusteringEngine.ClusterItems(creatures, ClusterDistance);
+            List<ItemCluster> creatureClusters = ClusteringEngine.ClusterItems(creatures, CreatureClusterDistance);
             PinManager.SyncTransientClusters(minimap, creatureClusters);
 
             // Type #2/#3 (semi-permanent) - resources and physics-detected points of interest don't

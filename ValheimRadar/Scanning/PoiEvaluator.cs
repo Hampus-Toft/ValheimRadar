@@ -58,18 +58,14 @@ namespace ValheimRadar
         private static readonly Dictionary<string, string> DungeonEntranceNames = new Dictionary<string, string>
         {
             ["halfburried_forestcrypt"] = "Burial Chambers",
-            ["hildir_crypt"] = "Burial Chambers (Hildir)",
-            ["hildir_cave"] = "Frost Caves (Hildir)",
-            ["bearcave"] = "Bear Cave",
         };
 
-        // Every prefab name DungeonEntranceNames knows about, lowercased - matched directly (in
-        // addition to the Teleport+DungeonGenerator component check below) because BearCave is
-        // confirmed to carry only a Teleport component, no DungeonGenerator, so the component check
-        // alone would never catch it.
+        // Every prefab name DungeonEntranceNames knows about, lowercased - matched directly in
+        // addition to the Teleport+DungeonGenerator component check below. (Bear Cave, which has only
+        // a Teleport, is now a curated LocationDefinition.)
         private static readonly string[] KnownDungeonEntranceAliases =
         {
-            "halfburried_forestcrypt", "hildir_crypt", "hildir_cave", "bearcave",
+            "halfburried_forestcrypt",
         };
 
         internal static readonly PoiRule[] Rules =

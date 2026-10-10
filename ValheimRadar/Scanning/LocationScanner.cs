@@ -212,6 +212,37 @@ namespace ValheimRadar
             return results;
         }
 
+        // Mountain Caves come in one Location prefab (MountainCave02); the rare ones with a Tetra pond
+        // differ only in which rooms their DungeonGenerator placed. Those rooms are instantiated as the
+        // generator's children (named after the room prefab - see DungeonGenerator.PlaceRoom) on every
+        // peer once the cave's zone is loaded, even before anyone goes inside, so this works the same
+        // on a host and on a dedicated-server client. The interior sits in the same zone as its
+        // entrance (5000 m up), so the caller matches each returned position to a cave by scan cell.
+        // Returns the positions of every loaded dungeon whose rooms include a Tetra pond.
+        public static List<Vector3> FindTetraPondDungeons()
+        {
+            var results = new List<Vector3>();
+
+            foreach (var generator in Object.FindObjectsByType<DungeonGenerator>(FindObjectsSortMode.None))
+            {
+                foreach (Room room in generator.GetComponentsInChildren<Room>(includeInactive: true))
+                {
+                    if (!IsTetraPondRoom(Utils.GetPrefabName(room.gameObject))) continue;
+
+                    results.Add(generator.transform.position);
+                    break;
+                }
+            }
+
+            return results;
+        }
+
+        // The cave rooms holding a Tetra pond: "cave_new_deeproom_bottom_lake" and "cave_dome_bottom_lake".
+        internal static bool IsTetraPondRoom(string roomName) =>
+            !string.IsNullOrEmpty(roomName) &&
+            roomName.StartsWith("cave_", System.StringComparison.OrdinalIgnoreCase) &&
+            roomName.EndsWith("_lake", System.StringComparison.OrdinalIgnoreCase);
+
         // Delegation targets for ObjectEvaluator's categoryKey-resolution methods (see
         // IsCategoryEnabled/GetDefaultIconForCategory/GetVanillaIconForCategory) - resolves a
         // "location:{key}" categoryKey back to enabled-state/icon without a live GameObject, exactly

@@ -47,13 +47,40 @@ namespace ValheimRadar
                 return count > 1 ? $"{count}x {displayName}" : displayName;
             }
 
-            TrySplitStarSuffix(displayName, out _, out string stars);
+            TrySplitBadgeSuffix(displayName, out _, out string badge);
             if (count > 1)
             {
-                return stars.Length > 0 ? $"{count}x {stars}" : $"{count}x";
+                return badge.Length > 0 ? $"{count}x {badge}" : $"{count}x";
             }
 
-            return stars;
+            return badge;
+        }
+
+        // The quality suffix CreatureEvaluator appends to a fish's display name: " (Q3)".
+        public static string FishQualitySuffix(int quality) => $" (Q{quality})";
+
+        // Splits a trailing rank badge off a display name: a creature's star rating (" (★★)") or a fish's
+        // quality (" (Q3)"). Returns false (baseName == displayName, badge == "") when there is none.
+        public static bool TrySplitBadgeSuffix(string displayName, out string baseName, out string badge)
+        {
+            if (TrySplitStarSuffix(displayName, out baseName, out badge)) return true;
+
+            baseName = displayName ?? string.Empty;
+            badge = string.Empty;
+
+            int open = baseName.LastIndexOf(" (Q", System.StringComparison.Ordinal);
+            if (open < 0 || baseName[baseName.Length - 1] != ')') return false;
+
+            string inner = baseName.Substring(open + 2, baseName.Length - open - 3);
+            if (inner.Length < 2) return false;
+            for (int i = 1; i < inner.Length; i++)
+            {
+                if (!char.IsDigit(inner[i])) return false;
+            }
+
+            badge = inner;
+            baseName = baseName.Substring(0, open);
+            return true;
         }
 
         // CreatureEvaluator appends " (★★)" (one ★ per rolled star) to a starred creature's display name.
