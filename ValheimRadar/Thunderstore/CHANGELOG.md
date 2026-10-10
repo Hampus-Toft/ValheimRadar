@@ -3,6 +3,12 @@
 Versions 1.9.0, 1.12.0 and 1.12.1 were never released on their own; their changes are listed
 under 1.9.1 and 1.12.2.
 
+## 1.15.0 - 2026-10-10
+
+- **Removed:** the **Raise Player Marker** setting. It didn't reliably draw your marker above the
+  pins and could cause map display problems when turned on. The map's layering is now always
+  Valheim's own. Nothing to do: the old line in your config file is simply ignored.
+
 ## 1.14.0 - 2026-10-10
 
 - **Added:** **Creature Cluster Distance** (General) - how close creatures must be to share a pin, set

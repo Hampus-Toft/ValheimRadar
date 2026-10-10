@@ -208,35 +208,4 @@ namespace ValheimRadar.Tests.Pinning
             Assert.False(RadarConfig.ClearDismissedPins.Value);
         }
     }
-
-    public class MinimapMarkerOrderTests
-    {
-        [Fact]
-        public void CompareDrawOrder_LaterSiblingDrawsAfter()
-        {
-            Assert.True(MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 3 }, new[] { 0, 2 }) > 0);
-            Assert.True(MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 1 }, new[] { 0, 2 }) < 0);
-        }
-
-        [Fact]
-        public void CompareDrawOrder_DecidedAtFirstDifferingLevel()
-        {
-            // Marker deep inside an earlier branch still draws before anything in a later branch.
-            Assert.True(MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 1, 9, 9 }, new[] { 0, 2 }) < 0);
-            Assert.True(MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 2 }, new[] { 0, 1, 9, 9 }) > 0);
-        }
-
-        [Fact]
-        public void CompareDrawOrder_AncestorDrawsBeforeDescendant()
-        {
-            Assert.True(MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 2 }, new[] { 0, 2, 5 }) < 0);
-            Assert.True(MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 2, 5 }, new[] { 0, 2 }) > 0);
-        }
-
-        [Fact]
-        public void CompareDrawOrder_SameElement_ReturnsZero()
-        {
-            Assert.Equal(0, MinimapMarkerOrder.CompareDrawOrder(new[] { 0, 2 }, new[] { 0, 2 }));
-        }
-    }
 }

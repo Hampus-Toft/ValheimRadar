@@ -463,10 +463,8 @@ namespace ValheimRadar
         // Left-click cross-out (see PinManager.TryToggleCheckedAt / Pinning/MinimapPatches.cs).
         public static ConfigEntry<bool> EnablePinCrossOut;
 
-        // Troubleshooting switches. RaisePlayerMarker gates the one place the plugin reorders vanilla map UI
-        // (see Pinning/MinimapMarkerOrder.cs); DiagnosticLogging enables the throttled pin-name and
-        // unmapped-Location log lines (PinManager.LogNameDiagnostics, LocationScanner).
-        public static ConfigEntry<bool> RaisePlayerMarker;
+        // Troubleshooting switch: enables the throttled pin-name and unmapped-Location log lines
+        // (PinManager.LogNameDiagnostics, LocationScanner).
         public static ConfigEntry<bool> DiagnosticLogging;
 
         // Master Group Toggles
@@ -644,7 +642,6 @@ namespace ValheimRadar
             EnablePinRemoval = Bind(config, "01 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
             ClearDismissedPins = Bind(config, "01 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
             EnablePinCrossOut = Bind(config, "01 - General", "Enable Pin Cross-Out", true, "Left-click a ValheimRadar resource or location pin on the large map to cross it out (an X, like checking off a normal map pin) - e.g. a dungeon you've already looted. Left-click it again to clear the X. Crossed-out pins are remembered per world. Creature pins are live and can't be crossed out.");
-            RaisePlayerMarker = Bind(config, "01 - General", "Raise Player Marker", false, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
             DiagnosticLogging = Bind(config, "01 - General", "Diagnostic Logging", false, "Write verbose troubleshooting lines (pin created/updated/removed, Location scan summaries, pin name state while the large map is open, unmapped Location prefabs) to the BepInEx log. Leave off unless troubleshooting.");
 
             Group_Creatures = Bind(config, "02 - Master Groups", "Enable Creatures Group", true, "Master toggle for all creatures, bosses, and fish.");
