@@ -16,7 +16,7 @@ namespace ValheimRadar
         // GUID before v1.12.3 - its .cfg is carried over once by MigrateLegacyConfig.
         private const string LegacyPluginGUID = "com.yourname.valheimradar";
         public const string PluginName = "ValheimRadar";
-        public const string PluginVersion = "1.14.0";
+        public const string PluginVersion = "1.15.0";
 
         // How often queued pin changes are written to the world's database (PinManager.FlushPersistence) -
         // only what changed, in one small transaction, so this can be short: a crash/alt-F4 loses at
@@ -152,10 +152,6 @@ namespace ValheimRadar
                 currentWorldName = ZNet.instance != null ? ZNet.instance.GetWorldName() : null;
                 diagnosticTimer = 0f;
                 diagnosticLogCount = 0;
-                if (RadarConfig.RaisePlayerMarker == null || RadarConfig.RaisePlayerMarker.Value)
-                {
-                    MinimapMarkerOrder.Apply(Minimap.instance);
-                }
                 PinManager.OpenWorld(currentWorldName, Player.m_localPlayer.transform.position, ClusterDistance);
                 PinManager.DrawLoadedLocationPins(Minimap.instance);
                 wasActive = true;

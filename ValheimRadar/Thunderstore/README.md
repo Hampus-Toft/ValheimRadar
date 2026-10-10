@@ -53,7 +53,7 @@ immediately. Settings from older versions (`com.yourname.valheimradar.cfg`) are 
 
 | Section | What's in it |
 |---|---|
-| General | Scan radius (default 100 m), scan interval, cluster distance (separately for creatures and for resources/points of interest), rescan interval, removing mined-out resources, hiding picked plants, right-click dismissal, left-click cross-out, drawing your own marker above the pins, diagnostic logging |
+| General | Scan radius (default 100 m), scan interval, cluster distance (separately for creatures and for resources/points of interest), rescan interval, removing mined-out resources, hiding picked plants, right-click dismissal, left-click cross-out, diagnostic logging |
 | Master Groups | One switch per group: creatures, berries, mushrooms, plants & crops, ground pickables, ores, functional structures, spawners, boss altars, dungeons, runestones, ruins |
 | Creatures | Per-creature toggles by biome, plus minimum star level and tamed/wild filter for tameable species; whether creature pins show names (off by default - the icon already says what it is) |
 | Resources / Structures / Locations | A toggle for each individual resource and point of interest |
