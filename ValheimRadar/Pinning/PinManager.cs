@@ -65,6 +65,12 @@ namespace ValheimRadar
         // world database's dismissed table (see PinManager.Persistence.cs).
         private static readonly DismissedPinStore dismissedPins = new DismissedPinStore();
 
+        // Pins the player crossed out by left-clicking them (see TryToggleCheckedAt) - same per-point
+        // category + position records as dismissals, but the pin stays on the map with vanilla's X over
+        // it. A resource cluster shows the X while every one of its points is crossed out. Persisted in
+        // the world database's checked_pins table.
+        private static readonly DismissedPinStore checkedPins = new DismissedPinStore();
+
         // Regrowing pickables the local player picked, hidden until they grow back (see MarkPickedAt /
         // UpdateRespawnTimers). Like dismissals they're excluded from clustering while hidden, but the
         // raw point stays recorded. Persisted in the world database's respawn_timers table.
@@ -97,6 +103,7 @@ namespace ValheimRadar
             ClearRawPoints();
             rawLocationPoints.Clear();
             dismissedPins.Clear();
+            checkedPins.Clear();
             respawnTimers.Clear();
         }
 
@@ -175,6 +182,7 @@ namespace ValheimRadar
                 RemoveRawPoint(key);
                 DetachFromCluster(point, "planted");
                 dismissalsChanged |= dismissedPins.Remove(point.CategoryKey, point.Position);
+                if (checkedPins.Remove(point.CategoryKey, point.Position)) QueueCheckedSave();
 
                 RadarLog.Diag($"[ValheimRadar] point-planted key={key} name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
             }
@@ -211,8 +219,10 @@ namespace ValheimRadar
                 RemoveRawPoint(key);
                 DetachFromCluster(point, "depleted");
 
-                // A dismissal (manual, or from mining it - see MarkDepletedAt) has nothing left to hide.
+                // A dismissal (manual, or from mining it - see MarkDepletedAt) has nothing left to hide,
+                // nor a cross-out anything left to mark.
                 dismissalsChanged |= dismissedPins.Remove(point.CategoryKey, point.Position);
+                if (checkedPins.Remove(point.CategoryKey, point.Position)) QueueCheckedSave();
 
                 RadarLog.Diag($"[ValheimRadar] point-depleted key={key} name={point.DisplayName} pos={point.Position.x:F1},{point.Position.y:F1},{point.Position.z:F1}");
             }
@@ -456,7 +466,7 @@ namespace ValheimRadar
 
                 if (shouldShow && entry.Pin == null)
                 {
-                    entry.Pin = minimap.AddPin(entry.Position, Minimap.PinType.Icon3, entry.Label, save: false, isChecked: false);
+                    entry.Pin = minimap.AddPin(entry.Position, Minimap.PinType.Icon3, entry.Label, save: false, isChecked: IsChecked(entry.IsPersistent, entry.CategoryKey, entry.Position));
                     entry.Pin.m_icon = entry.Icon;
                     RadarLog.Diag($"[ValheimRadar] pin-created key={kvp.Key} name={entry.DisplayName} pos={entry.Position.x:F1},{entry.Position.y:F1},{entry.Position.z:F1}");
                 }
@@ -627,6 +637,7 @@ namespace ValheimRadar
         private static void UpdateOrCreatePin(Minimap minimap, string clusterKey, Vector3 pos, string name, string displayName, string rawName, Sprite icon, bool isPersistent, string categoryKey, int count = 1)
         {
             bool categoryEnabled = ObjectEvaluator.IsCategoryEnabled(categoryKey);
+            bool isChecked = IsChecked(isPersistent, categoryKey, pos);
 
             if (icon == null)
             {
@@ -657,6 +668,7 @@ namespace ValheimRadar
                     existing.Pin.m_pos = pos;
                     ApplyPinName(existing.Pin, name);
                     existing.Pin.m_icon = icon;
+                    existing.Pin.m_checked = isChecked;
 
                     // Only logged when something actually moved/renamed - UpdateOrCreatePin runs
                     // every scan tick for every live cluster, so logging unconditionally here would
@@ -671,7 +683,7 @@ namespace ValheimRadar
 
                 if (categoryEnabled && existing.Pin == null)
                 {
-                    existing.Pin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: false);
+                    existing.Pin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: isChecked);
                     existing.Pin.m_icon = icon;
                     RadarLog.Diag($"[ValheimRadar] pin-created key={clusterKey} name={displayName} pos={pos.x:F1},{pos.y:F1},{pos.z:F1}");
                 }
@@ -687,7 +699,7 @@ namespace ValheimRadar
                 Minimap.PinData newPin = null;
                 if (categoryEnabled)
                 {
-                    newPin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: false);
+                    newPin = minimap.AddPin(pos, Minimap.PinType.Icon3, name, save: false, isChecked: isChecked);
                     newPin.m_icon = icon;
                 }
 
@@ -891,6 +903,130 @@ namespace ValheimRadar
             LogPinRemoved(pinKey, "dismissed");
 
             QueueDismissedSave();
+        }
+
+        // --- Cross-out (left-click) ------------------------------------------------------------------
+        //
+        // Vanilla left-click toggles a pin's X (PinData.m_checked), but only for pins with m_save == true.
+        // MinimapPatches forwards a left-click that hit no vanilla pin here. Same candidates as dismissal:
+        // persistent (resource / Location) pins currently on the map.
+
+        // Creature pins (not persistent) are never crossed out.
+        private static bool IsChecked(bool isPersistent, string categoryKey, Vector3 position) =>
+            isPersistent && checkedPins.Contains(categoryKey, position);
+
+        private static bool IsClusterChecked(ItemCluster cluster)
+        {
+            if (cluster.Items.Count == 0) return false;
+
+            foreach (TrackedItem item in cluster.Items)
+            {
+                if (!checkedPins.Contains(item.CategoryKey, item.Position)) return false;
+            }
+
+            return true;
+        }
+
+        public static bool TryToggleCheckedAt(Minimap minimap, Vector3 worldPos, float radius)
+        {
+            if (minimap == null) return false;
+            if (RadarConfig.EnablePinCrossOut != null && !RadarConfig.EnablePinCrossOut.Value) return false;
+
+            var entries = new List<PinEntry>();
+            var clusters = new List<ItemCluster>();
+            var positions = new List<Vector3>();
+            foreach (PinEntry entry in activeClusterPins.Values)
+            {
+                if (!PinDismissal.IsDismissible(entry.IsPersistent, IsShown(entry.Pin))) continue;
+
+                entries.Add(entry);
+                clusters.Add(null);
+                positions.Add(entry.Position);
+            }
+
+            foreach (var kvp in resourcePins)
+            {
+                if (!PinDismissal.IsDismissible(true, IsShown(kvp.Value))) continue;
+
+                entries.Add(null);
+                clusters.Add(kvp.Key);
+                positions.Add(kvp.Value.m_pos);
+            }
+
+            int index = PinDismissal.IndexOfClosest(positions, worldPos, radius);
+            if (index < 0) return false;
+
+            ItemCluster cluster = clusters[index];
+            if (cluster != null)
+            {
+                bool check = !IsClusterChecked(cluster);
+                foreach (TrackedItem item in cluster.Items)
+                {
+                    if (check) checkedPins.Add(item.CategoryKey, item.Position);
+                    else checkedPins.Remove(item.CategoryKey, item.Position);
+                }
+
+                resourcePins[cluster].m_checked = check;
+                RadarLog.Diag($"[ValheimRadar] pin-checked name={cluster.DisplayName} checked={check}");
+            }
+            else
+            {
+                PinEntry entry = entries[index];
+                bool check = !checkedPins.Contains(entry.CategoryKey, entry.Position);
+                if (check) checkedPins.Add(entry.CategoryKey, entry.Position);
+                else checkedPins.Remove(entry.CategoryKey, entry.Position);
+
+                entry.Pin.m_checked = check;
+                RadarLog.Diag($"[ValheimRadar] pin-checked name={entry.DisplayName} checked={check}");
+            }
+
+            QueueCheckedSave();
+            return true;
+        }
+
+        // --- Mountain Caves with a Tetra pond ---------------------------------------------------------
+
+        // Re-tags every recorded plain Mountain Cave sharing a scan cell (zone) with one of
+        // pondDungeons (see LocationScanner.FindTetraPondDungeons) as the Tetra-pond variant. Its key
+        // stays the same, so later Location scans see it as already known; a dismissal or cross-out
+        // follows it to the new category.
+        public static void MarkTetraPondCaves(Minimap minimap, List<Vector3> pondDungeons)
+        {
+            if (minimap == null) return;
+            if (!RadarConfig.CanonicalLocationLookup.TryGetValue(RadarConfig.MountainCaveTetraKey, out var pondDef)) return;
+
+            string plainCategory = "location:" + RadarConfig.MountainCaveKey;
+            string pondCategory = "location:" + RadarConfig.MountainCaveTetraKey;
+
+            var pondCells = new HashSet<ScanCellKey>();
+            foreach (Vector3 pos in pondDungeons) pondCells.Add(CellOf(pos));
+
+            foreach (var kvp in rawLocationPoints)
+            {
+                TrackedLocation loc = kvp.Value;
+                if (loc.CategoryKey != plainCategory || !pondCells.Contains(CellOf(loc.Position))) continue;
+
+                loc.CategoryKey = pondCategory;
+                loc.DisplayName = pondDef.DisplayName;
+                QueueLocationSave(loc);
+
+                if (dismissedPins.Remove(plainCategory, loc.Position))
+                {
+                    dismissedPins.Add(pondCategory, loc.Position);
+                    QueueDismissedSave();
+                }
+
+                if (checkedPins.Remove(plainCategory, loc.Position))
+                {
+                    checkedPins.Add(pondCategory, loc.Position);
+                    QueueCheckedSave();
+                }
+
+                RadarLog.Diag($"[ValheimRadar] location-variant key={kvp.Key} name={loc.DisplayName}");
+
+                if (dismissedPins.Contains(loc.CategoryKey, loc.Position)) continue;
+                UpdateOrCreatePin(minimap, kvp.Key, loc.Position, loc.DisplayName, loc.DisplayName, loc.RawName, ResolveLocationIcon(loc), isPersistent: true, loc.CategoryKey);
+            }
         }
 
         // Restores every dismissed pin: forgets the dismissals and rebuilds what they had hidden. Persistent

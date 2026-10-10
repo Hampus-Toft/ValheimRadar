@@ -77,6 +77,52 @@ namespace ValheimRadar.Tests.Scanning
             Assert.Equal(crypt2.CanonicalKey, crypt4.CanonicalKey);
         }
 
+        [Theory]
+        [InlineData("hildir_crypt", "dungeon_hildircrypt")]
+        [InlineData("hildir_cave", "dungeon_hildircave")]
+        [InlineData("hildir_plainsfortress", "dungeon_hildirtower")]
+        [InlineData("bearcave", "dungeon_bearcave")]
+        public void LocationDefinitions_HildirDungeons_AreCuratedDungeonEntrances(string prefabLower, string canonicalKey)
+        {
+            Assert.True(RadarConfig.LocationPrefabLookup.TryGetValue(prefabLower, out var def));
+            Assert.Equal(canonicalKey, def.CanonicalKey);
+            Assert.Equal(RadarConfig.LocationGroup.DungeonEntrance, def.Group);
+            Assert.True(ObjectEvaluator.IsCategoryEnabled($"location:{canonicalKey}"));
+        }
+
+        [Fact]
+        public void TetraPondCaveVariant_HasOwnToggleButNoPrefab()
+        {
+            Assert.DoesNotContain(RadarConfig.LocationPrefabLookup.Values, d => d.CanonicalKey == RadarConfig.MountainCaveTetraKey);
+            Assert.Equal("mountaincave02", Assert.Single(RadarConfig.CanonicalLocationLookup[RadarConfig.MountainCaveKey].PrefabNames));
+
+            string category = "location:" + RadarConfig.MountainCaveTetraKey;
+            Assert.True(ObjectEvaluator.IsCategoryEnabled(category));
+            Assert.Equal("dungeon.png", ObjectEvaluator.GetDefaultIconForCategory(category));
+
+            RadarConfig.Locations[RadarConfig.MountainCaveKey].Enabled.Value = false;
+            Assert.True(ObjectEvaluator.IsCategoryEnabled(category));
+            RadarConfig.Locations[RadarConfig.MountainCaveKey].Enabled.Value = true;
+
+            RadarConfig.Locations[RadarConfig.MountainCaveTetraKey].Enabled.Value = false;
+            Assert.False(ObjectEvaluator.IsCategoryEnabled(category));
+            RadarConfig.Locations[RadarConfig.MountainCaveTetraKey].Enabled.Value = true;
+        }
+
+        [Theory]
+        [InlineData("cave_new_deeproom_bottom_lake", true)]
+        [InlineData("cave_dome_bottom_lake", true)]
+        [InlineData("cave_new_deeproom_bottom", false)]
+        [InlineData("cave_new_deeproom_bottom_ice", false)]
+        [InlineData("cave_dome_bottom_endcap", false)]
+        [InlineData("sunkencrypt_new_Room1", false)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void IsTetraPondRoom_OnlyCaveLakeRooms(string roomName, bool expected)
+        {
+            Assert.Equal(expected, LocationScanner.IsTetraPondRoom(roomName));
+        }
+
         [Fact]
         public void LocationDefinitions_DecorativeRuinTypes_DefaultDisabled()
         {

@@ -10,9 +10,9 @@ count (e.g. `5x Copper`).
 
 | Kind | Examples | How it behaves |
 |---|---|---|
-| **Creatures** | Every vanilla creature and boss, grouped by biome; fish; the Leviathan | Live pins that follow the creatures and disappear when they leave the scan radius. Each creature has its own toggle; tameable ones (Boar, Wolf, Lox, Hen, Asksvin, Moose) also have a minimum star level and a tamed/wild filter (e.g. only wild 2-star Wolves, or only your own tamed ones). |
+| **Creatures** | Every vanilla creature and boss, grouped by biome; fish; the Leviathan | Live pins that follow the creatures and disappear when they leave the scan radius. Each creature has its own toggle; tameable ones (Boar, Wolf, Lox, Hen, Asksvin, Moose) also have a minimum star level and a tamed/wild filter (e.g. only wild 2-star Wolves, or only your own tamed ones). Fish show their quality (Q1-Q5) under the pin, and each quality level can be hidden separately. |
 | **Resources** | Copper, tin, silver, obsidian, muddy scrap piles, Guck Sacks; berries; mushrooms; Dandelion, Thistle, Magecap and wild crops; flint, stones, branches | Remembered for the world once found, so they're back on the map the next time you log in. |
-| **Points of interest** | Dungeon and cave entrances, boss altars, runestones, ruins and towers, shipwrecks, tar pits, Greydwarf nests, body/bone piles, chests (above-ground and buried), wild beehives, the Bog Witch, Haldor and the Start Temple | Read directly from Valheim's world data, so they appear as soon as their area is generated. One pin each, remembered for the world. |
+| **Points of interest** | Dungeon and cave entrances (including Bear Caves, Hildir's quest dungeons, and Mountain Caves with a Tetra pond as their own toggle), boss altars, runestones, ruins and towers, shipwrecks, tar pits, Greydwarf nests, body/bone piles, chests (above-ground and buried), wild beehives, the Bog Witch, Haldor and the Start Temple | Read directly from Valheim's world data, so they appear as soon as their area is generated. One pin each, remembered for the world. |
 
 Pins use Valheim's own icons wherever the game has one: a creature's trophy, a resource's item icon.
 
@@ -27,6 +27,8 @@ never pinned.
   regrow, based on each plant's own respawn time in in-game time.
 - **Dismissed:** right-click a resource or point-of-interest pin on the large map to hide it for good in that world,
   e.g. a dungeon you've already cleared. The *Restore Dismissed Pins* setting brings them all back.
+- **Crossed out:** left-click a resource or point-of-interest pin on the large map to put an X over it (like checking
+  off your own map pins), e.g. a dungeon you've looted that you still want to see. Left-click again to clear it.
 
 Saved pins are stored per world in `BepInEx/config/ValheimRadar/PinData/<world>.db`. Only what changed gets written,
 and saved pins are loaded and drawn gradually around you and in the visible map area, so a big save doesn't freeze
@@ -51,7 +53,7 @@ immediately. Settings from older versions (`com.yourname.valheimradar.cfg`) are 
 
 | Section | What's in it |
 |---|---|
-| General | Scan radius (default 100 m), scan interval, cluster distance, rescan interval, removing mined-out resources, hiding picked plants, right-click dismissal, drawing your own marker above the pins, diagnostic logging |
+| General | Scan radius (default 100 m), scan interval, cluster distance (separately for creatures and for resources/points of interest), rescan interval, removing mined-out resources, hiding picked plants, right-click dismissal, left-click cross-out, drawing your own marker above the pins, diagnostic logging |
 | Master Groups | One switch per group: creatures, berries, mushrooms, plants & crops, ground pickables, ores, functional structures, spawners, boss altars, dungeons, runestones, ruins |
 | Creatures | Per-creature toggles by biome, plus minimum star level and tamed/wild filter for tameable species; whether creature pins show names (off by default - the icon already says what it is) |
 | Resources / Structures / Locations | A toggle for each individual resource and point of interest |

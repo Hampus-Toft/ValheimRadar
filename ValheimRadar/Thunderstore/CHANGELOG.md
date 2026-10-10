@@ -3,6 +3,27 @@
 Versions 1.9.0, 1.12.0 and 1.12.1 were never released on their own; their changes are listed
 under 1.9.1 and 1.12.2.
 
+## 1.14.0 - 2026-10-10
+
+- **Added:** **Creature Cluster Distance** (General) - how close creatures must be to share a pin, set
+  separately from resources. `ClusterDistance` now only affects resources and points of interest.
+  Both default to 15 m, so nothing changes until you move a slider.
+- **Added:** fish show their quality under the pin (`Q1`-`Q5`, 5 being the rarest), and fish of
+  different quality get separate pins. New **Fish Quality 1-5** toggles in the Fish section hide
+  each quality level separately.
+- **Added:** left-click a resource or point-of-interest pin on the large map to cross it out (an X,
+  like checking off your own pins) - e.g. a dungeon you've looted. Left-click again to clear it.
+  Remembered per world; turn it off with **Enable Pin Cross-Out**.
+- **Added:** Mountain Caves with a Tetra pond get their own pin and toggle, **Mountain Cave (Tetra
+  Pond)**. A cave is recognised once you've been near it (its interior has to load), and existing
+  cave pins switch over automatically.
+- **Fixed:** Hildir's quest dungeons are now pinned as dungeon entrances: the **Smouldering Tomb**
+  (Black Forest), **Sealed Tower** (Plains) and **Howling Cavern** (Mountains), each with its own
+  toggle. They appear as soon as their area is generated, like other dungeons.
+- **Fixed:** **Bear Cave** entrances (Black Forest) are pinned again, with their own toggle.
+
+Existing settings and saved pins carry over.
+
 ## 1.13.0 - 2026-10-04
 
 - **Added:** a **Tamed or Wild** setting for every tameable creature - show both (default, same as

@@ -154,6 +154,34 @@ namespace ValheimRadar.Tests.Models
             Assert.NotEqual(a.GetClusterKey(), b.GetClusterKey());
         }
 
+        [Theory]
+        [InlineData(1, "Perch (Q1)", 1, "Q1")]
+        [InlineData(5, "Perch (Q5)", 3, "3x Q5")]
+        public void BuildLabel_FishQuality_ShownWhenNameHidden(int quality, string expectedName, int count, string expectedLabel)
+        {
+            string displayName = "Perch" + ItemCluster.FishQualitySuffix(quality);
+
+            Assert.Equal(expectedName, displayName);
+            Assert.Equal(expectedLabel, ItemCluster.BuildLabel(displayName, count, hideName: true));
+            Assert.Equal(count > 1 ? $"{count}x {displayName}" : displayName, ItemCluster.BuildLabel(displayName, count, hideName: false));
+        }
+
+        [Theory]
+        [InlineData("Perch (Q3)", true, "Perch", "Q3")]
+        [InlineData("Boar (★★)", true, "Boar", "★★")]
+        [InlineData("Perch (Q)", false, "Perch (Q)", "")]
+        [InlineData("Perch (Queen)", false, "Perch (Queen)", "")]
+        [InlineData("Perch", false, "Perch", "")]
+        [InlineData("", false, "", "")]
+        public void TrySplitBadgeSuffix_SplitsStarsAndFishQuality(string displayName, bool expectedResult, string expectedBase, string expectedBadge)
+        {
+            bool result = ItemCluster.TrySplitBadgeSuffix(displayName, out string baseName, out string badge);
+
+            Assert.Equal(expectedResult, result);
+            Assert.Equal(expectedBase, baseName);
+            Assert.Equal(expectedBadge, badge);
+        }
+
         [Fact]
         public void GetClusterKey_NonPositiveMaxDistance_FallsBackToGridSizeOne()
         {

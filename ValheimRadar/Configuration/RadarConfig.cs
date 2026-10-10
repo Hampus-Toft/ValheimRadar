@@ -315,7 +315,19 @@ namespace ValheimRadar
             new LocationDefinition("dungeon_blackforestcrypt", new[] { "crypt2", "crypt3", "crypt4" }, "Black Forest Dungeon", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
             new LocationDefinition("dungeon_sunkencrypt", new[] { "sunkencrypt4" }, "Sunken Crypt", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
             new LocationDefinition("dungeon_trollcave", new[] { "trollcave02" }, "Troll Cave", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
-            new LocationDefinition("dungeon_mountaincave", new[] { "mountaincave02" }, "Mountain Cave", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition(MountainCaveKey, new[] { "mountaincave02" }, "Mountain Cave", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            // Not a Location of its own: a Mountain Cave whose generated rooms include a Tetra pond is
+            // re-tagged with this key once its interior has been seen (see LocationScanner.ScanCaveVariants),
+            // so it can be toggled apart from ordinary caves. No prefab names - never matched directly.
+            new LocationDefinition(MountainCaveTetraKey, new string[0], "Mountain Cave (Tetra Pond)", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            // Hildir's quest dungeons (map pin names from hud_pin_hildir1/2/3). Rare, one-off Locations whose
+            // roots have no ZNetView, so the physics-scan fallback never caught them.
+            new LocationDefinition("dungeon_hildircrypt", new[] { "hildir_crypt" }, "Smouldering Tomb", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition("dungeon_hildircave", new[] { "hildir_cave" }, "Howling Cavern", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            new LocationDefinition("dungeon_hildirtower", new[] { "hildir_plainsfortress" }, "Sealed Tower", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
+            // Black Forest bear den. Its Location root has no ZNetView either, so the physics-scan
+            // fallback's "bearcave" alias never fired in practice.
+            new LocationDefinition("dungeon_bearcave", new[] { "bearcave" }, "Bear Cave", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
             new LocationDefinition("dungeon_dvergrtown", new[] { "mistlands_dvergrtownentrance1", "mistlands_dvergrtownentrance2" }, "Dvergr Town", SecDungeonLocations, LocationGroup.DungeonEntrance, "dungeon.png"),
 
             // RUNESTONES - one entry per biome variant.
@@ -399,6 +411,10 @@ namespace ValheimRadar
 
         public static readonly Dictionary<string, LocationConfigEntry> Locations = new Dictionary<string, LocationConfigEntry>();
 
+        // Canonical keys of the plain Mountain Cave and its Tetra-pond variant (see LocationScanner.ScanCaveVariants).
+        public const string MountainCaveKey = "dungeon_mountaincave";
+        public const string MountainCaveTetraKey = "dungeon_mountaincave_tetra";
+
         // Used by ObjectEvaluator to guard its remaining generic/component-based rules (Runestones,
         // Dungeons' component fallback) so they only act as a defense-in-depth net for prefabs the
         // curated LocationDefinitions table doesn't already own, instead of double-pinning the same
@@ -427,6 +443,7 @@ namespace ValheimRadar
         public static ConfigEntry<float> ScanRadius;
         public static ConfigEntry<float> UpdateInterval;
         public static ConfigEntry<float> ClusterDistance;
+        public static ConfigEntry<float> CreatureClusterDistance;
         public static ConfigEntry<int> ScanBatchCount;
         public static ConfigEntry<float> LocationScanInterval;
 
@@ -442,6 +459,9 @@ namespace ValheimRadar
         // acts as a button: setting it true un-dismisses everything and RadarPlugin resets it to false.
         public static ConfigEntry<bool> EnablePinRemoval;
         public static ConfigEntry<bool> ClearDismissedPins;
+
+        // Left-click cross-out (see PinManager.TryToggleCheckedAt / Pinning/MinimapPatches.cs).
+        public static ConfigEntry<bool> EnablePinCrossOut;
 
         // Troubleshooting switches. RaisePlayerMarker gates the one place the plugin reorders vanilla map UI
         // (see Pinning/MinimapMarkerOrder.cs); DiagnosticLogging enables the throttled pin-name and
@@ -472,6 +492,19 @@ namespace ValheimRadar
         // When false (default) a creature pin whose icon identifies it drops the species name from its
         // label and shows only count/stars - see ItemCluster.ShouldHideCreatureName.
         public static ConfigEntry<bool> ShowCreatureNames;
+
+        // Fish quality 1..5 (index 0 = quality 1); each one can be hidden separately. See IsFishQualityShown.
+        public const int MaxFishQuality = 5;
+        public static readonly ConfigEntry<bool>[] FishQualities = new ConfigEntry<bool>[MaxFishQuality];
+
+        // Fish quality as the game stores it is 1-based; anything outside 1..MaxFishQuality is clamped.
+        internal static int ClampFishQuality(int quality) => Math.Max(1, Math.Min(MaxFishQuality, quality));
+
+        internal static bool IsFishQualityShown(int quality)
+        {
+            ConfigEntry<bool> entry = FishQualities[ClampFishQuality(quality) - 1];
+            return entry == null || entry.Value;
+        }
 
         // Berries
         public static ConfigEntry<bool> TrackRaspberry;
@@ -600,7 +633,8 @@ namespace ValheimRadar
 
             ScanRadius = Bind(config, "01 - General", "ScanRadius", 100f, "Scan radius around player.", new AcceptableValueRange<float>(10f, 300f));
             UpdateInterval = Bind(config, "01 - General", "UpdateInterval", 1.0f, "Scan interval in seconds.", new AcceptableValueRange<float>(0.1f, 10f));
-            ClusterDistance = Bind(config, "01 - General", "ClusterDistance", 15.0f, "Max distance between items to group into a cluster.", new AcceptableValueRange<float>(1f, 50f));
+            ClusterDistance = Bind(config, "01 - General", "ClusterDistance", 15.0f, "Max distance between resources/points of interest to group into one pin. Creatures use Creature Cluster Distance instead.", new AcceptableValueRange<float>(1f, 50f));
+            CreatureClusterDistance = Bind(config, "01 - General", "Creature Cluster Distance", 15.0f, "Max distance between creatures (animals, monsters, fish) of the same kind to group into one pin. Lower it to see creatures individually.", new AcceptableValueRange<float>(1f, 50f));
             ScanBatchCount = Bind(config, "01 - General", "ScanBatchCount", 4, "Creatures only: splits each full-radius scan into this many spatial batches, spread across successive update ticks, so a large ScanRadius doesn't cause a lag spike on any single tick. Higher values reduce per-tick cost but make moving creatures take longer to refresh (1 = scan the whole radius every tick).", new AcceptableValueRange<int>(1, 20));
             LocationScanInterval = Bind(config, "01 - General", "LocationScanInterval", 5f, "How often (seconds) to poll Valheim's own zone/location system for newly-generated world Locations (dungeons, ruins, runestones, boss altars, etc.). Independent of UpdateInterval since new Locations only appear as unexplored zones generate.", new AcceptableValueRange<float>(1f, 30f));
             ResourceRescanInterval = Bind(config, "01 - General", "ResourceRescanInterval", 30f, "How often (seconds) already-scanned ground in the loaded area around you is scanned again for resources and physics-detected points of interest. Rescans pick up anything missed the first time and notice resources that are gone (see Remove Depleted Resources). Only a couple of map cells are rescanned per update tick. 0 = never rescan.", new AcceptableValueRange<float>(0f, 600f));
@@ -609,6 +643,7 @@ namespace ValheimRadar
 
             EnablePinRemoval = Bind(config, "01 - General", "Enable Pin Removal", true, "Right-click a ValheimRadar resource or location pin on the large map (same as removing a normal map pin) to dismiss it. Dismissed pins stay hidden across scans and sessions for that world, and only that pin is affected - the rest of its category keeps showing. Creature pins are live and can't be dismissed.");
             ClearDismissedPins = Bind(config, "01 - General", "Restore Dismissed Pins", false, "Set to true to bring back every pin dismissed with right-click in the current world. Resets itself to false.");
+            EnablePinCrossOut = Bind(config, "01 - General", "Enable Pin Cross-Out", true, "Left-click a ValheimRadar resource or location pin on the large map to cross it out (an X, like checking off a normal map pin) - e.g. a dungeon you've already looted. Left-click it again to clear the X. Crossed-out pins are remembered per world. Creature pins are live and can't be crossed out.");
             RaisePlayerMarker = Bind(config, "01 - General", "Raise Player Marker", false, "Draw your own map marker (and the ship marker) above all ValheimRadar pins. Applied when you connect to a world. Turn off to leave Valheim's map layering untouched if it conflicts with another map mod.");
             DiagnosticLogging = Bind(config, "01 - General", "Diagnostic Logging", false, "Write verbose troubleshooting lines (pin created/updated/removed, Location scan summaries, pin name state while the large map is open, unmapped Location prefabs) to the BepInEx log. Leave off unless troubleshooting.");
 
@@ -621,7 +656,7 @@ namespace ValheimRadar
             Group_FunctionalStructures = Bind(config, "02 - Master Groups", "Enable Functional Structures", true, "Master toggle for chests (buried and unburied), beehives, and the Bog Witch's camp.");
             Group_SpawnersAndLandmarks = Bind(config, "02 - Master Groups", "Enable Spawners & Landmarks Group", true, "Master toggle for monster-spawner landmarks (Greydwarf Nest, Body Pile, Bone Pile).");
             Group_BossLocations = Bind(config, "02 - Master Groups", "Enable Boss Altars Group", true, "Master toggle for boss summoning altars (Eikthyr, Elder, Bonemass, Moder, Yagluth, the Queen).");
-            Group_DungeonLocations = Bind(config, "02 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain cave, Dvergr town) plus any unlisted dungeon-plane entrance (Bear Cave, Hildir's Crypt/Cave) caught by the physics-scan fallback.");
+            Group_DungeonLocations = Bind(config, "02 - Master Groups", "Enable Dungeon Entrances Group", true, "Master toggle for dungeon/cave Location entrances (crypts, sunken crypt, troll cave, mountain caves, Hildir's Smouldering Tomb/Howling Cavern/Sealed Tower, Bear Cave, Dvergr town) plus any unlisted dungeon-plane entrance caught by the physics-scan fallback.");
             Group_RunestoneLocations = Bind(config, "02 - Master Groups", "Enable Runestones Group", true, "Master toggle for every biome's runestone Locations, plus any unlisted/modded runestone caught by the physics-scan fallback.");
             Group_RuinLocations = Bind(config, "02 - Master Groups", "Enable Ruins & Structures Group", true, "Master toggle for the full ZoneSystem-based ruins/structures roster (ruined houses, stone towers, shipwrecks, Mistlands structures, tar pits, etc.), plus any unlisted/modded ruin caught by the physics-scan fallback. The Start Temple and Black Forest Trader are always shown and have no toggle.");
 
@@ -648,6 +683,11 @@ namespace ValheimRadar
                 }
 
                 Creatures[def.CanonicalKey] = entry;
+            }
+
+            for (int quality = 1; quality <= MaxFishQuality; quality++)
+            {
+                FishQualities[quality - 1] = Bind(config, SecFish, $"Fish Quality {quality}", true, $"Show fish of quality {quality} (1 = common, {MaxFishQuality} = rarest). The quality is shown as Q{quality} under the fish's pin. Requires the fish's own toggle above to also be on.");
             }
 
             Locations.Clear();
@@ -708,7 +748,7 @@ namespace ValheimRadar
             // AbandonedRuins/Dungeons rules).
             TrackAbandonedRuins = Bind(config, SecRuinLocations, "Abandoned Ruins (Unlisted/Modded)", true, "Show ruins not covered by the curated list above (Combat Ruin, Meadows Village 2).");
             TrackRunestones = Bind(config, SecRunestoneLocations, "Runestones (Unlisted/Modded)", true, "Show any runestone not covered by the curated list above.");
-            TrackUnlistedDungeons = Bind(config, SecDungeonLocations, "Dungeon Entrances (Unlisted)", true, "Show dungeon-plane entrances not covered by the curated list above (Bear Cave, Hildir's Crypt/Cave, and any other Teleport-based entrance), detected by component signature rather than name.");
+            TrackUnlistedDungeons = Bind(config, SecDungeonLocations, "Dungeon Entrances (Unlisted)", true, "Show dungeon-plane entrances not covered by the curated list above (any Teleport-based entrance), detected by component signature rather than name.");
         }
     }
 }

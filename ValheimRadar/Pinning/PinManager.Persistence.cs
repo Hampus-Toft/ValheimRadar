@@ -40,6 +40,7 @@ namespace ValheimRadar
         private static readonly HashSet<string> pendingPointDeletes = new HashSet<string>();
         private static readonly Dictionary<string, TrackedLocation> pendingLocationSaves = new Dictionary<string, TrackedLocation>();
         private static bool dismissedSaveQueued;
+        private static bool checkedSaveQueued;
         private static bool respawnSaveQueued;
 
         // Set while OpenWorld fills the in-memory stores, so loading doesn't queue every row it read.
@@ -76,6 +77,7 @@ namespace ValheimRadar
             ClearRawPoints();
             rawLocationPoints.Clear();
             dismissedPins.Clear();
+            checkedPins.Clear();
             respawnTimers.Clear();
 
             lastPlayerPosition = playerPosition;
@@ -173,7 +175,7 @@ namespace ValheimRadar
         public static void FlushPersistence()
         {
             if (database == null) return;
-            if (pendingPointSaves.Count == 0 && pendingPointDeletes.Count == 0 && pendingLocationSaves.Count == 0 && !dismissedSaveQueued && !respawnSaveQueued && !pointsFormatSaveQueued) return;
+            if (pendingPointSaves.Count == 0 && pendingPointDeletes.Count == 0 && pendingLocationSaves.Count == 0 && !dismissedSaveQueued && !checkedSaveQueued && !respawnSaveQueued && !pointsFormatSaveQueued) return;
 
             try
             {
@@ -183,6 +185,7 @@ namespace ValheimRadar
                     if (pendingPointSaves.Count > 0) database.UpsertPoints(ToRecords(pendingPointSaves));
                     if (pendingLocationSaves.Count > 0) database.UpsertLocations(pendingLocationSaves.Values);
                     if (dismissedSaveQueued) database.ReplaceDismissed(dismissedPins.Entries);
+                    if (checkedSaveQueued) database.ReplaceChecked(checkedPins.Entries);
                     if (respawnSaveQueued) database.ReplaceRespawnTimers(respawnTimers.Entries);
 
                     // Only once every point has been loaded (and so migrated), in the same commit as the
@@ -236,6 +239,11 @@ namespace ValheimRadar
             if (!loadingWorld && database != null) dismissedSaveQueued = true;
         }
 
+        private static void QueueCheckedSave()
+        {
+            if (!loadingWorld && database != null) checkedSaveQueued = true;
+        }
+
         private static void QueueRespawnSave()
         {
             if (!loadingWorld && database != null) respawnSaveQueued = true;
@@ -247,6 +255,7 @@ namespace ValheimRadar
             pendingPointDeletes.Clear();
             pendingLocationSaves.Clear();
             dismissedSaveQueued = false;
+            checkedSaveQueued = false;
             respawnSaveQueued = false;
             pointsFormatSaveQueued = false;
         }
@@ -278,6 +287,7 @@ namespace ValheimRadar
             try
             {
                 foreach (var entry in database.LoadDismissed()) dismissedPins.Add(entry.Key, entry.Value);
+                foreach (var entry in database.LoadChecked()) checkedPins.Add(entry.Key, entry.Value);
                 foreach (var entry in database.LoadRespawnTimers()) respawnTimers.Add(entry.CategoryKey, entry.Position, entry.PickedAt, entry.RespawnAt);
                 foreach (var loc in database.LoadLocations()) rawLocationPoints["loc:" + loc.LocationKey] = loc;
 
@@ -295,6 +305,7 @@ namespace ValheimRadar
                 ClearRawPoints();
                 rawLocationPoints.Clear();
                 dismissedPins.Clear();
+                checkedPins.Clear();
                 respawnTimers.Clear();
                 return false;
             }

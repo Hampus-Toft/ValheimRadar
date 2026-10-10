@@ -157,6 +157,22 @@ namespace ValheimRadar.Tests.Persistence
         }
 
         [Fact]
+        public void Checked_ReplaceWholesale_IndependentOfDismissed()
+        {
+            using (var db = PinDatabase.Open(DbPath))
+            {
+                db.ReplaceDismissed(new[] { new KeyValuePair<string, Vector3>("resource:Raspberry", new Vector3(1, 2, 3)) });
+                db.ReplaceChecked(new[] { new KeyValuePair<string, Vector3>("location:dungeon_mountaincave", Vector3.zero), new KeyValuePair<string, Vector3>("resource:Chests", Vector3.one) });
+                db.ReplaceChecked(new[] { new KeyValuePair<string, Vector3>("location:dungeon_hildircrypt", new Vector3(4, 5, 6)) });
+
+                var entry = Assert.Single(db.LoadChecked());
+                Assert.Equal("location:dungeon_hildircrypt", entry.Key);
+                Assert.Equal(new Vector3(4, 5, 6), entry.Value);
+                Assert.Equal("resource:Raspberry", Assert.Single(db.LoadDismissed()).Key);
+            }
+        }
+
+        [Fact]
         public void RespawnTimers_ReplaceWholesaleKeepsDoublePrecision()
         {
             using (var db = PinDatabase.Open(DbPath))

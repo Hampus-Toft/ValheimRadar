@@ -216,7 +216,7 @@ namespace ValheimRadar
         private static void AddResourcePin(Minimap minimap, ItemCluster cluster)
         {
             Sprite icon = ResourceIcon(cluster);
-            Minimap.PinData pin = minimap.AddPin(clusterGrid.GetCentroid(cluster), Minimap.PinType.Icon3, ResourceLabel(cluster, icon), save: false, isChecked: false);
+            Minimap.PinData pin = minimap.AddPin(clusterGrid.GetCentroid(cluster), Minimap.PinType.Icon3, ResourceLabel(cluster, icon), save: false, isChecked: IsClusterChecked(cluster));
             pin.m_icon = icon;
 
             resourcePins[cluster] = pin;
@@ -229,6 +229,7 @@ namespace ValheimRadar
             pin.m_pos = clusterGrid.GetCentroid(cluster);
             ApplyPinName(pin, ResourceLabel(cluster, icon));
             pin.m_icon = icon;
+            pin.m_checked = IsClusterChecked(cluster);
         }
 
         // A cluster's icon comes from the point that started it. When that came back null (e.g. resolved

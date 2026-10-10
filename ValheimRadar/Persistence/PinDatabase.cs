@@ -26,7 +26,7 @@ namespace ValheimRadar
     }
 
     // A world's persisted pin state in one SQLite file (PinData/<world>.db): recorded resource points,
-    // Locations, dismissed pins and respawn timers. Replaces the four pipe-delimited .txt files,
+    // Locations, dismissed pins, crossed-out pins and respawn timers. Replaces the four pipe-delimited .txt files,
     // which were rewritten in full on every save (1.7 MB for a well-explored world, on the main
     // thread every 30 s while exploring, and the respawn file on every single pick). Here
     // PinManager writes only what changed, batched into one transaction per flush.
@@ -38,7 +38,9 @@ namespace ValheimRadar
         // 1: v1.12.0. 2: points carry their scan cell (cell_x/cell_z, ScanGeometry's 64 m zone grid)
         // with an index, so PinManager can load a world cell by cell, nearest to the player first,
         // spread over frames (see PinManager.ContinueLoadingPoints) instead of all at once on connect.
-        internal const int SchemaVersion = 2;
+        // 3: checked_pins table (left-click cross-out). Purely additive - Open's CREATE TABLE IF NOT
+        // EXISTS adds it to older files, so Migrate has nothing to convert.
+        internal const int SchemaVersion = 3;
 
         // Meta key holding the PinManager.SaveFormatVersion the points table was last written with,
         // so category-key migrations keep working exactly as they did for the text format.
@@ -65,6 +67,7 @@ namespace ValheimRadar
                 connection.Execute("CREATE TABLE IF NOT EXISTS points (key TEXT PRIMARY KEY, user_id INTEGER NOT NULL, zdo_id INTEGER NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, display_name TEXT NOT NULL, raw_name TEXT NOT NULL, category TEXT NOT NULL, cell_x INTEGER NOT NULL DEFAULT 0, cell_z INTEGER NOT NULL DEFAULT 0)");
                 connection.Execute("CREATE TABLE IF NOT EXISTS locations (location_key TEXT PRIMARY KEY, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, display_name TEXT NOT NULL, raw_name TEXT NOT NULL, category TEXT NOT NULL)");
                 connection.Execute("CREATE TABLE IF NOT EXISTS dismissed (category TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL)");
+                connection.Execute("CREATE TABLE IF NOT EXISTS checked_pins (category TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL)");
                 connection.Execute("CREATE TABLE IF NOT EXISTS respawn_timers (category TEXT NOT NULL, x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL, picked_at REAL NOT NULL, respawn_at REAL NOT NULL)");
 
                 var db = new PinDatabase(connection);
@@ -287,12 +290,21 @@ namespace ValheimRadar
             }
         }
 
-        // --- dismissed pins / respawn timers (small sets, replaced wholesale on change) ------------
+        // --- dismissed / crossed-out pins, respawn timers (small sets, replaced wholesale on change) -
 
-        internal List<KeyValuePair<string, Vector3>> LoadDismissed()
+        internal List<KeyValuePair<string, Vector3>> LoadDismissed() => LoadPositions("dismissed");
+
+        internal void ReplaceDismissed(IEnumerable<KeyValuePair<string, Vector3>> entries) => ReplacePositions("dismissed", entries);
+
+        internal List<KeyValuePair<string, Vector3>> LoadChecked() => LoadPositions("checked_pins");
+
+        internal void ReplaceChecked(IEnumerable<KeyValuePair<string, Vector3>> entries) => ReplacePositions("checked_pins", entries);
+
+        // table is always one of the fixed names above, never user input.
+        private List<KeyValuePair<string, Vector3>> LoadPositions(string table)
         {
             var result = new List<KeyValuePair<string, Vector3>>();
-            using (var s = connection.Prepare("SELECT category, x, y, z FROM dismissed"))
+            using (var s = connection.Prepare($"SELECT category, x, y, z FROM {table}"))
             {
                 while (s.Step())
                 {
@@ -303,10 +315,10 @@ namespace ValheimRadar
             return result;
         }
 
-        internal void ReplaceDismissed(IEnumerable<KeyValuePair<string, Vector3>> entries)
+        private void ReplacePositions(string table, IEnumerable<KeyValuePair<string, Vector3>> entries)
         {
-            connection.Execute("DELETE FROM dismissed");
-            using (var s = connection.Prepare("INSERT INTO dismissed (category, x, y, z) VALUES (?, ?, ?, ?)"))
+            connection.Execute($"DELETE FROM {table}");
+            using (var s = connection.Prepare($"INSERT INTO {table} (category, x, y, z) VALUES (?, ?, ?, ?)"))
             {
                 foreach (var e in entries)
                 {
