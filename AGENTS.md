@@ -101,8 +101,7 @@ ValheimRadar/
 │   ├── MinimapPatches.cs        # Harmony postfixes on Minimap.RemovePin/OnMapLeftClick: right-click dismisses, left-click crosses out radar pins
 │   ├── DepletionPatches.cs      # Harmony hooks (Destructible/MineRock/MineRock5.Damage, Pickable.Interact): hide a depletable pin on the local player's first effective hit/pick; Pickable.SetPicked hides a regrowing pickable's pin until it respawns
 │   ├── RespawnTimers.cs         # Pure store of picked regrowing pickables (berries/mushrooms/crops) hidden until their respawn world time
-│   ├── DepletionRules.cs        # Pure rules for when a rescan's "not found" is conclusive enough to remove a depletable point
-│   └── MinimapMarkerOrder.cs    # Raises the player/ship map markers above all pins (sibling order only)
+│   └── DepletionRules.cs        # Pure rules for when a rescan's "not found" is conclusive enough to remove a depletable point
 ├── Scanning/
 │   ├── ClusteringEngine.cs        # Greedy distance-based clustering + ClusterGrid (indexed, incremental, rect queries)
 │   ├── ObjectEvaluator.cs         # Thin composition root: categoryKey -> enabled-state/icon, dispatches to the 3 evaluators below
